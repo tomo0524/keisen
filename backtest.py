@@ -304,21 +304,37 @@ def load_universe():
     raise RuntimeError("上場銘柄一覧を読み込めませんでした / " + " | ".join(errs))
 
 
-def download(codes, start):
+def _fetch_batch(batch, start):
     import yfinance as yf
-    frames, failed = {}, []
-    B = 80
+    return yf.download(batch, start=start, interval="1d", auto_adjust=False, group_by="ticker",
+                       threads=True, progress=False, timeout=30)
+
+
+def download(codes, start, batch_limit=180, total_limit=90 * 60):
+    """80銘柄ずつ取得。1回180秒・全体90分を超えたら打ち切って、取れた分で進む。"""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FTimeout
+    frames, failed, skipped = {}, [], 0
+    B, t0 = 80, time.time()
+    pool = ThreadPoolExecutor(max_workers=4)
     for i in range(0, len(codes), B):
         batch = [c + ".T" for c in codes[i:i + B]]
+        if time.time() - t0 > total_limit:
+            print("全体の時間上限に達したため、取得を打ち切ります", flush=True)
+            failed += [t[:-2] for t in batch]
+            continue
         data = None
-        for attempt in range(3):
+        for attempt in range(2):
+            fut = pool.submit(_fetch_batch, batch, start)
             try:
-                data = yf.download(batch, start=start, interval="1d", auto_adjust=False, group_by="ticker",
-                                   threads=True, progress=False)
+                data = fut.result(timeout=batch_limit)
+                break
+            except FTimeout:
+                print(f"{i}: {batch_limit}秒を超えたため、この分を飛ばします", flush=True)
+                skipped += 1
                 break
             except Exception as e:
-                print("retry", i, e)
-                time.sleep(15 * (attempt + 1))
+                print("retry", i, e, flush=True)
+                time.sleep(15)
         for t in batch:
             try:
                 sub = data[t] if data is not None and len(batch) > 1 else data
@@ -330,8 +346,9 @@ def download(codes, start):
                     failed.append(t[:-2])
             except Exception:
                 failed.append(t[:-2])
-        print(f"{min(i + B, len(codes))}/{len(codes)} 取得済み {len(frames)}", flush=True)
+        print(f"{min(i + B, len(codes))}/{len(codes)} 取得済み {len(frames)} ({int(time.time() - t0)}秒)", flush=True)
         time.sleep(2)
+    pool.shutdown(wait=False, cancel_futures=True)
     return frames, failed
 
 
@@ -355,4 +372,6 @@ def main(outdir="backtest"):
 
 
 if __name__ == "__main__":
-    sys.exit(main(*sys.argv[1:]))
+    code = main(*sys.argv[1:])
+    sys.stdout.flush()
+    os._exit(code)  # 固まった取得処理が残っていても、必ずここで終了する

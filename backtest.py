@@ -115,54 +115,84 @@ def stats(x):
     }
 
 
+VARIANTS = {
+    "A": "元の条件(条件が揃った翌日の始値で買う)",
+    "B": "Aの後20営業日以内に、終値が75日線を上抜けた翌日の始値で買う",
+    "C": "Aのうち、75日線までの距離が3%以内のものだけ",
+}
+
+
+def variant_events(cond, c, ma75, cfg):
+    A = events(cond, cfg["cooldown"])
+    B, last = [], -10 ** 9
+    for i in A:
+        for k in range(i + 1, min(len(c), i + 21)):
+            if c[k] > ma75[k] and c[k - 1] <= ma75[k - 1]:
+                if k - last > cfg["cooldown"]:
+                    B.append(k)
+                    last = k
+                break
+    C = [i for i in A if ma75[i] / c[i] - 1 <= 0.03]
+    return {"A": A, "B": B, "C": C}
+
+
 def run(frames, names, today=None, cfg=CFG):
     """frames: {code: DataFrame(Open,High,Low,Close,Volume, index=日付)}"""
     H = cfg["horizons"]
     last_date = max(df.index[-1] for df in frames.values())
     eval_start = last_date - pd.DateOffset(years=cfg["years"])
     split = eval_start + pd.DateOffset(years=cfg["split_years_first"])
-    base_sum = {h: pd.Series(dtype=float) for h in H}
-    base_cnt = {h: pd.Series(dtype=float) for h in H}
-    base_pos = {h: pd.Series(dtype=float) for h in H}
+    base_parts = {h: [] for h in H}
     sigs, current = [], []
+    dropped = {"jump_windows": 0, "stocks_with_jump": 0}
 
     for code, df in frames.items():
         df = df.dropna()
+        df = df[(df["Open"] > 0) & (df["High"] >= df["Low"])]
         if len(df) < 260:
             continue
         o, h, l, c, v = (df[k].to_numpy(dtype=float) for k in ("Open", "High", "Low", "Close", "Volume"))
         d = df.index
-        cond, ind = condition(o, h, l, c, v, cfg)
         n = len(c)
-        # 比較対象: 流動性条件(同じ売買代金の範囲)を満たす全日(翌日始値で買い)
+        # ありえない値動き(前日終値比で3倍超・1/3未満)を含む期間は集計から除く
+        prev = np.append(np.nan, c[:-1])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            jump = (np.maximum(o, c) / prev > 3) | (np.minimum(o, c) / prev < 1 / 3)
+        jump[0] = False
+        if jump.any():
+            dropped["stocks_with_jump"] += 1
+        jc = np.cumsum(jump)
+        cond, ind = condition(o, h, l, c, v, cfg)
+
+        def clean(i, hz):  # i+1 .. i+hz の間に異常値がない
+            return i + hz < n and jc[i + hz] - jc[i] == 0
+
         liquid = (ind["turn"] >= cfg["turnover_min"]) & (ind["turn"] < cfg["turnover_max"])
         o_next = np.append(o[1:], np.nan)
         for hz in H:
             exitc = np.append(c[hz:], [np.nan] * hz)
             with np.errstate(divide="ignore", invalid="ignore"):
                 r = exitc / o_next - 1
-            ok = liquid & np.isfinite(r) & (d >= eval_start)
+            jc_end = np.append(jc[hz:], [jc[-1]] * hz)
+            okj = (jc_end - jc) == 0
+            dropped["jump_windows"] += int((liquid & ~okj).sum())
+            ok = liquid & np.isfinite(r) & okj & (d >= eval_start)
             if ok.any():
-                s = pd.Series(r[ok], index=d[ok])
-                base_sum[hz] = base_sum[hz].add(s, fill_value=0)
-                base_cnt[hz] = base_cnt[hz].add(pd.Series(1.0, index=s.index), fill_value=0)
-                base_pos[hz] = base_pos[hz].add((s > 0).astype(float), fill_value=0)
-        for i in events(cond, cfg["cooldown"]):
-            if d[i] < eval_start:
-                continue
-            fr = fwd_returns(o, c, i, H)
-            if fr is None:
-                continue
-            j1, j2 = i + 1, min(n, i + 21)
-            e = o[i + 1]
-            rec = {"code": code, "name": names.get(code, ""), "date": d[i].strftime("%Y-%m-%d"),
-                   "entry": float(e), "close": float(c[i]),
-                   "ma75_gap": float(c[i] / ind["ma75"][i] - 1),
-                   "mfe20": float(h[j1:j2].max() / e - 1), "mae20": float(l[j1:j2].min() / e - 1),
-                   "cross75_20": bool(np.any(c[j1:j2] > ind["ma75"][j1:j2]))}
-            for hz in H:
-                rec[f"r{hz}"] = fr[hz]
-            sigs.append(rec)
+                base_parts[hz].append(pd.Series(r[ok], index=d[ok]))
+        for var, idxs in variant_events(cond, c, ind["ma75"], cfg).items():
+            for i in idxs:
+                if d[i] < eval_start or i + 1 >= n or not o[i + 1] > 0:
+                    continue
+                e = o[i + 1]
+                j1, j2 = i + 1, min(n, i + 21)
+                rec = {"variant": var, "code": code, "name": names.get(code, ""), "date": d[i].strftime("%Y-%m-%d"),
+                       "entry": float(e), "close": float(c[i]),
+                       "ma75_gap": float(c[i] / ind["ma75"][i] - 1),
+                       "mfe20": float(h[j1:j2].max() / e - 1), "mae20": float(l[j1:j2].min() / e - 1),
+                       "cross75_20": bool(np.any(c[j1:j2] > ind["ma75"][j1:j2]))}
+                for hz in H:
+                    rec[f"r{hz}"] = float(c[i + hz] / e - 1) if clean(i, hz) else None
+                sigs.append(rec)
         if cond[-1] and d[-1] == last_date:
             k = n - 1
             while k > 0 and cond[k - 1]:
@@ -174,43 +204,57 @@ def run(frames, names, today=None, cfg=CFG):
                             "turnover5_oku": round(float(ind["turn"][-1]) / 1e8, 1), "since": d[k].strftime("%Y-%m-%d"),
                             "last_spike_days_ago": int(len(ind["spike"][max(0, n - cfg["spike_lookback"]):]) - 1 - sp[-1]) if len(sp) else None})
 
-    base_mean = {hz: (base_sum[hz] / base_cnt[hz]) for hz in H}
-    # 銘柄の翌日始値=シグナル日の翌営業日。比較対象はシグナル日を基準に同日のもの
+    # 比較対象: 同じ日に流動性条件を満たした全銘柄の「中央値」と「平均」
+    base_all = {hz: (pd.concat(base_parts[hz]) if base_parts[hz] else pd.Series(dtype=float)) for hz in H}
+    base_med = {hz: base_all[hz].groupby(level=0).median() for hz in H}
+    base_mean = {hz: base_all[hz].groupby(level=0).mean() for hz in H}
     for s in sigs:
         dd = pd.Timestamp(s["date"])
         for hz in H:
-            bm = base_mean[hz].get(dd, np.nan)
-            s[f"x{hz}"] = (s[f"r{hz}"] - bm) if s[f"r{hz}"] is not None and not math.isnan(bm) else None
+            r = s[f"r{hz}"]
+            bm, bmn = base_med[hz].get(dd, np.nan), base_mean[hz].get(dd, np.nan)
+            s[f"x{hz}"] = (r - bm) if r is not None and not math.isnan(bm) else None
+            s[f"xm{hz}"] = (r - bmn) if r is not None and not math.isnan(bmn) else None
 
     def block(rows):
         out = {}
         for hz in H:
-            out[str(hz)] = {"ret": stats([r[f"r{hz}"] for r in rows]), "excess": stats([r[f"x{hz}"] for r in rows])}
+            out[str(hz)] = {"ret": stats([r[f"r{hz}"] for r in rows]),
+                            "excess_vs_median": stats([r[f"x{hz}"] for r in rows]),
+                            "excess_vs_mean": stats([r[f"xm{hz}"] for r in rows]),
+                            "beat_median_rate": (float(np.mean([r[f"x{hz}"] > 0 for r in rows if r[f"x{hz}"] is not None]))
+                                                 if any(r[f"x{hz}"] is not None for r in rows) else None)}
         return out
 
     def base_block(lo, hi):
         out = {}
         for hz in H:
-            m = (base_cnt[hz].index >= lo) & (base_cnt[hz].index < hi)
-            cnt = base_cnt[hz][m].sum()
-            out[str(hz)] = {"n": int(cnt), "mean": float(base_sum[hz][m].sum() / cnt) if cnt else None,
-                            "win": float(base_pos[hz][m].sum() / cnt) if cnt else None}
+            b = base_all[hz]
+            b = b[(b.index >= lo) & (b.index < hi)]
+            out[str(hz)] = {"n": int(len(b)), "mean": float(b.mean()) if len(b) else None,
+                            "median": float(b.median()) if len(b) else None, "win": float((b > 0).mean()) if len(b) else None}
         return out
 
     far = last_date + pd.Timedelta(days=1)
-    first = [s for s in sigs if pd.Timestamp(s["date"]) < split]
-    second = [s for s in sigs if pd.Timestamp(s["date"]) >= split]
-    years = sorted({s["date"][:4] for s in sigs})
+    res_var = {}
+    for var in VARIANTS:
+        vs = [s for s in sigs if s["variant"] == var]
+        first = [s for s in vs if pd.Timestamp(s["date"]) < split]
+        second = [s for s in vs if pd.Timestamp(s["date"]) >= split]
+        years = sorted({s["date"][:4] for s in vs})
+        res_var[var] = {
+            "desc": VARIANTS[var], "signals": len(vs),
+            "all": block(vs), "first": block(first), "second": block(second),
+            "by_year": {y: block([s for s in vs if s["date"][:4] == y]) for y in years},
+            "path20": {"mfe": stats([s["mfe20"] for s in vs]), "mae": stats([s["mae20"] for s in vs]),
+                       "cross75_rate": float(np.mean([s["cross75_20"] for s in vs])) if vs else None},
+        }
     result = {
         "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "config": cfg, "period": [eval_start.strftime("%Y-%m-%d"), last_date.strftime("%Y-%m-%d")],
-        "split": split.strftime("%Y-%m-%d"), "stocks_tested": len(frames),
-        "signals": len(sigs),
-        "all": block(sigs), "first": block(first), "second": block(second),
+        "split": split.strftime("%Y-%m-%d"), "stocks_tested": len(frames), "cleaning": dropped,
+        "signals": res_var["A"]["signals"], "variants": res_var,
         "baseline": {"all": base_block(eval_start, far), "first": base_block(eval_start, split), "second": base_block(split, far)},
-        "by_year": {y: block([s for s in sigs if s["date"][:4] == y]) for y in years},
-        "path20": {"mfe": stats([s["mfe20"] for s in sigs]), "mae": stats([s["mae20"] for s in sigs]),
-                   "cross75_rate": float(np.mean([s["cross75_20"] for s in sigs])) if sigs else None},
         "current": sorted(current, key=lambda x: x["to_ma75"]),
     }
     return result, sigs
@@ -306,7 +350,7 @@ def main(outdir="backtest"):
         json.dump(result, f, ensure_ascii=False, indent=1, default=lambda x: None)
     pd.DataFrame(sigs).to_csv(os.path.join(outdir, "signals.csv"), index=False, encoding="utf-8-sig")
     pd.DataFrame(result["current"]).to_csv(os.path.join(outdir, "current.csv"), index=False, encoding="utf-8-sig")
-    print("シグナル", result["signals"], "件 / 現在該当", len(result["current"]), "銘柄")
+    print("シグナル(A)", result["signals"], "件 / 現在該当", len(result["current"]), "銘柄", result["cleaning"])
     return 0
 
 

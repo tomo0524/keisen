@@ -34,8 +34,12 @@ CFG = {
     "horizons": [5, 10, 20, 40, 60], "years": 5, "split_years_first": 3,
     "cost_roundtrip": 0.003,
 }
-JPX_URL = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
-UA = {"User-Agent": "Mozilla/5.0 (keisen-screener backtest)"}
+JPX_URLS = [
+    "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xlsx",
+    "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls",
+]
+UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      "Referer": "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"}
 
 
 # ---------- 判定(ネットに依存しない。テスト対象) ----------
@@ -214,12 +218,46 @@ def run(frames, names, today=None, cfg=CFG):
 
 # ---------- 取得 ----------
 
+def ensure(pkg):
+    try:
+        __import__(pkg)
+    except ImportError:
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
+
+
+def norm_code(x):
+    t = str(x).strip()
+    if t.endswith(".0"):
+        t = t[:-2]
+    return t
+
+
+def parse_universe(df):
+    """JPXの上場銘柄一覧(表)から、プライム・スタンダード・グロースの内国株式を取り出す。"""
+    col = lambda *keys: next(c for c in df.columns if all(k in str(c) for k in keys))
+    c_code, c_name, c_mk = col("コード"), col("銘柄名"), col("市場")
+    mk = df[c_mk].fillna("").astype(str)
+    sel = df[mk.str.contains("内国株式") & mk.str.contains("プライム|スタンダード|グロース")]
+    names = {norm_code(r[c_code]): str(r[c_name]).strip() for _, r in sel.iterrows()}
+    markets = {norm_code(r[c_code]): str(r[c_mk]).replace("（内国株式）", "").strip() for _, r in sel.iterrows()}
+    return names, markets
+
+
 def load_universe():
-    raw = urllib.request.urlopen(urllib.request.Request(JPX_URL, headers=UA), timeout=60).read()
-    df = pd.read_excel(io.BytesIO(raw), dtype=str)
-    mk = df["市場・商品区分"].fillna("")
-    df = df[mk.str.contains("内国株式") & mk.str.contains("プライム|スタンダード|グロース")]
-    return {str(r["コード"]).strip(): str(r["銘柄名"]).strip() for _, r in df.iterrows()}, dict(zip(df["コード"].astype(str), mk[df.index]))
+    errs = []
+    for url in JPX_URLS:
+        try:
+            ensure("openpyxl" if url.endswith("x") else "xlrd")
+            raw = urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60).read()
+            names, markets = parse_universe(pd.read_excel(io.BytesIO(raw), dtype=str))
+            if len(names) > 1000:
+                print("銘柄一覧:", url)
+                return names, markets
+            errs.append(f"{url}: 銘柄数が少ない({len(names)})")
+        except Exception as e:
+            errs.append(f"{url}: {type(e).__name__}: {e}")
+    raise RuntimeError("上場銘柄一覧を読み込めませんでした / " + " | ".join(errs))
 
 
 def download(codes, start):

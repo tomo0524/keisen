@@ -1,0 +1,1665 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#ECEEF1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E1217" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="罫線">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<title>罫線スクリーナー</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Shippori+Mincho+B1:wght@700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+:root { color-scheme: light; padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+[hidden] { display: none !important; }
+/* 罫線(チャート)を縦に流し読みする、片手操作のスマホ向けスクリーナー。
+   日本の慣習に合わせて陽線=朱(赤)、陰線=青。罫線紙のような冷たい灰色の地に、墨色のボタン。 */
+:root {
+  --bg: #ECEEF1;
+  --surface: #F7F8FA;
+  --soft: #E1E4E8;
+  --ink: #13171D;
+  --muted: #59636F;
+  --line: #CBD1D8;
+  --up: #C42E28;
+  --down: #2A5FBF;
+  --hi: #E3B019;
+  --ma1: #D17A1E;
+  --ma2: #188F7C;
+  --ma3: #7E52C4;
+  --accent: #13171D;
+  --on-accent: #F4F6F8;
+  --f-disp: 'Shippori Mincho B1', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  --f-body: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic', sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1217; --surface: #161B22; --soft: #1E252E; --ink: #E7EBF0; --muted: #8C97A5; --line: #29313B;
+    --up: #F06A63; --down: #6C9BF2; --hi: #EBC240; --ma1: #E59A44; --ma2: #3CBBA6; --ma3: #A585E8;
+    --accent: #E7EBF0; --on-accent: #0E1217; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1217; --surface: #161B22; --soft: #1E252E; --ink: #E7EBF0; --muted: #8C97A5; --line: #29313B;
+  --up: #F06A63; --down: #6C9BF2; --hi: #EBC240; --ma1: #E59A44; --ma2: #3CBBA6; --ma3: #A585E8;
+  --accent: #E7EBF0; --on-accent: #0E1217; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 14px/1.6 var(--f-body);
+  padding-inline: 16px;
+  padding-block: 14px 92px;
+}
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.app { max-width: 640px; margin: 0 auto; }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.up { color: var(--up); }
+.dn { color: var(--down); }
+
+/* ヘッダー */
+.brand { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-bottom: 12px; border-bottom: 2px solid var(--ink); margin-bottom: 14px; }
+.brand h1 { margin: 0; font: 700 17px/1.2 var(--f-body); letter-spacing: .04em; }
+.brand h1 .k { font: 700 32px/1 var(--f-disp); margin-right: 4px; letter-spacing: 0; }
+.asof { margin: 0; font: 400 11.5px/1.4 var(--f-mono); color: var(--muted); text-align: right; }
+
+.lab { margin: 0 0 8px; font: 700 11.5px/1.3 var(--f-body); letter-spacing: .12em; color: var(--muted); }
+.note { margin: 0 0 14px; padding: 9px 12px; background: var(--soft); border-radius: 6px; font-size: 12.5px; color: var(--muted); }
+
+/* 形の選択 */
+.grp { margin-bottom: 14px; }
+.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.chip {
+  appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  text-align: left; padding: 9px 10px 10px; border-radius: 6px; min-height: 66px;
+  display: flex; flex-direction: column; gap: 7px; font: 500 12.5px/1.35 var(--f-body);
+}
+.chip svg { width: 28px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.chip span { text-wrap: balance; }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+
+/* 操作行 */
+.ctl { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center; margin: 4px 0 12px; }
+.seg { display: inline-grid; grid-auto-flow: column; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.seg button { appearance: none; border: 0; background: none; padding: 0 14px; min-height: 40px; font-weight: 500; font-size: 13px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.field { min-height: 40px; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 0 10px; font-size: 13px; min-width: 0; }
+#q { flex: 1 1 140px; }
+#sort { flex: 0 0 auto; }
+
+details { border-top: 1px solid var(--line); }
+details:last-of-type { border-bottom: 1px solid var(--line); }
+summary { list-style: none; cursor: pointer; padding: 12px 0; font-weight: 500; font-size: 13px; display: flex; justify-content: space-between; align-items: center; min-height: 44px; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: '＋'; color: var(--muted); font-size: 13px; }
+details[open] > summary::after { content: '－'; }
+.dbody { padding: 0 0 14px; }
+.params { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.pf { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); min-width: 0; }
+.pf .in { display: flex; align-items: center; gap: 6px; }
+.pf input { width: 100%; min-width: 0; min-height: 40px; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 0 10px; font: 500 14px var(--f-mono); }
+.pf em { font-style: normal; color: var(--muted); min-width: 1.5em; }
+.linkbtn { appearance: none; background: none; border: 0; padding: 10px 0 0; color: var(--muted); text-decoration: underline; font-size: 12.5px; min-height: 40px; }
+
+/* 結果 */
+.res-head { display: flex; justify-content: space-between; align-items: baseline; margin: 22px 0 4px; padding-bottom: 8px; border-bottom: 2px solid var(--ink); }
+.res-head h2 { margin: 0; font: 700 15px/1.3 var(--f-disp); }
+.res-head .cnt { font: 500 13px var(--f-mono); }
+.list { list-style: none; margin: 0; padding: 0; }
+.list > li { border-bottom: 1px solid var(--line); }
+.row { appearance: none; display: block; width: 100%; background: none; border: 0; text-align: left; padding: 12px 0 10px; }
+.row:active { background: var(--soft); }
+.r-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: baseline; }
+.r-name { font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
+.r-px { font: 500 17px/1.3 var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.r-code { font: 400 11.5px var(--f-mono); color: var(--muted); }
+.r-chg { font: 500 12.5px var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.spark { display: block; width: 100%; height: 42px; margin: 6px 0 4px; }
+.spark.up { color: var(--up); }
+.spark.dn { color: var(--down); }
+.r-hits { display: grid; gap: 4px; }
+.hit { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 12.5px; line-height: 1.5; }
+.hit svg { width: 28px; height: 16px; margin-top: 3px; stroke: var(--ink); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.hit b { font-weight: 700; margin-right: 6px; }
+.hit span { color: var(--muted); }
+.empty { padding: 28px 4px; color: var(--muted); font-size: 13px; }
+
+/* データ画面 */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+.panel h2 { margin: 0 0 6px; font: 700 15px/1.3 var(--f-disp); }
+.panel p { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+.btns { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn { appearance: none; display: inline-flex; align-items: center; justify-content: center; min-height: 46px; padding: 0 18px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 14px; position: relative; }
+.btn.ghost { background: none; color: var(--ink); border-color: var(--line); }
+.btn:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+.msg { margin: 10px 0 0; font-size: 12.5px; min-height: 1.2em; }
+.msg.err { color: var(--up); }
+pre { margin: 0; padding: 10px 12px; background: var(--soft); border-radius: 6px; overflow-x: auto; font: 400 11.5px/1.6 var(--f-mono); }
+.defs { margin: 0; display: grid; gap: 12px; }
+.defs dt { font-weight: 700; display: flex; gap: 8px; align-items: center; }
+.defs dt svg { width: 28px; height: 16px; stroke: var(--ink); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.defs dd { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+.fine { color: var(--muted); font-size: 12px; margin: 14px 0 0; }
+
+/* 地合い */
+.mk-top { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+.mk-top .field { flex: 0 0 auto; font-family: var(--f-mono); }
+.mk-top .btn { flex: 1 1 auto; min-height: 42px; padding: 0 14px; font-size: 13.5px; }
+.mk-sum { margin: 4px 0 18px; }
+.mk-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--soft); gap: 2px; }
+.mk-bar i { display: block; height: 100%; }
+.mk-bar .t { background: var(--up); }
+.mk-bar .n { background: var(--line); }
+.mk-bar .h { background: var(--down); }
+.mk-cnt { display: flex; gap: 14px; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.mk-cnt b { font: 500 15px var(--f-mono); color: var(--ink); margin-left: 4px; }
+.mk-grp { margin-bottom: 16px; }
+.mk-row { display: grid; grid-template-columns: minmax(0, 1fr) 128px; grid-template-rows: auto auto; column-gap: 12px; row-gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); align-items: center; }
+.mk-name b { display: block; font-size: 14px; line-height: 1.35; }
+.mk-src { font: 400 11px/1.4 var(--f-mono); color: var(--muted); }
+.mk-in { display: flex; align-items: center; gap: 5px; }
+.mk-in input { width: 100%; min-width: 0; min-height: 40px; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 0 8px; font: 500 15px var(--f-mono); text-align: right; }
+.mk-in em { font-style: normal; font-size: 11.5px; color: var(--muted); min-width: 2.4em; white-space: nowrap; }
+.mk-chg { font: 400 12px var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.pill { appearance: none; justify-self: end; min-height: 32px; min-width: 76px; padding: 0 10px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface); font: 700 12px var(--f-body); color: var(--muted); }
+.pill[data-j="tail"] { border-color: var(--up); color: var(--up); }
+.pill[data-j="head"] { border-color: var(--down); color: var(--down); }
+.pill[data-o="1"]::after { content: '手動'; margin-left: 5px; font-weight: 500; font-size: 10px; color: var(--muted); }
+.mk-memo { width: 100%; min-height: 84px; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 9px 10px; font: 400 14px/1.6 var(--f-body); resize: vertical; }
+.hist { list-style: none; margin: 0; padding: 0; }
+.hist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; border-top: 1px solid var(--line); }
+.hist .hrow { appearance: none; background: none; border: 0; text-align: left; padding: 10px 0; min-height: 44px; font-size: 13px; }
+.hist .hrow b { font-family: var(--f-mono); font-weight: 500; margin-right: 8px; }
+.hist .hdel { appearance: none; background: none; border: 0; color: var(--muted); text-decoration: underline; font-size: 12px; min-height: 40px; padding: 0 4px; }
+.mk-out { width: 100%; min-height: 220px; border: 1px solid var(--line); background: var(--soft); border-radius: 6px; padding: 10px; font: 400 12.5px/1.7 var(--f-body); margin-top: 10px; }
+.rules { margin: 0; padding-left: 1.2em; font-size: 12.5px; color: var(--muted); }
+.rules li { margin-bottom: 4px; }
+
+/* 下部タブ */
+.tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.tabbar button { appearance: none; border: 0; background: none; min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.tabbar button svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tabbar button[aria-current="page"] { color: var(--ink); font-weight: 700; box-shadow: inset 0 2px 0 var(--ink); }
+
+/* 銘柄詳細 */
+.detail { position: fixed; inset: 0; z-index: 10; background: var(--bg); overflow-y: auto; overscroll-behavior: contain; padding-bottom: env(safe-area-inset-bottom, 0px); }
+.d-bar { position: sticky; top: 0; z-index: 2; background: var(--bg); display: flex; align-items: center; gap: 10px; padding: calc(8px + env(safe-area-inset-top, 0px)) 16px 8px; border-bottom: 1px solid var(--line); }
+.d-back { appearance: none; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; min-height: 40px; padding: 0 12px; font-weight: 500; font-size: 13px; flex: none; }
+.d-title { min-width: 0; }
+.d-title b { display: block; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere; }
+.d-title span { font: 400 11.5px var(--f-mono); color: var(--muted); }
+.d-wrap { max-width: 640px; margin: 0 auto; padding: 14px 16px 28px; }
+.d-quote { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.d-quote .px { font: 500 28px/1.1 var(--f-mono); font-variant-numeric: tabular-nums; }
+.d-quote .chg { font: 500 14px var(--f-mono); }
+.d-quote .dt { font: 400 11.5px var(--f-mono); color: var(--muted); margin-left: auto; }
+.d-read { font: 400 11.5px/1.6 var(--f-mono); color: var(--muted); min-height: 2.9em; margin: 8px 0 4px; font-variant-numeric: tabular-nums; }
+.d-read b { color: var(--ink); font-weight: 500; }
+.chartbox { width: 100%; }
+#d-canvas { display: block; touch-action: pan-y; width: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 4px; font-size: 11.5px; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; }
+.d-sec { margin: 22px 0 8px; }
+.hitbtn { appearance: none; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); padding: 11px 0; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 13px; }
+.hitbtn svg { width: 28px; height: 16px; margin-top: 3px; stroke: var(--ink); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.hitbtn b { margin-right: 6px; }
+.hitbtn span { color: var(--muted); }
+.hitbtn[aria-pressed="true"] { background: var(--soft); box-shadow: inset 3px 0 0 var(--hi); padding-left: 8px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0 18px; margin: 0; }
+.stats div { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.stats dt { color: var(--muted); }
+.stats dd { margin: 0; font: 500 13px var(--f-mono); font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="brand">
+    <h1><span class="k">罫線</span>スクリーナー</h1>
+    <p class="asof" id="asof"></p>
+  </header>
+
+  <main>
+    <section id="v-screen">
+      <p class="note" id="srcnote"></p>
+
+      <div id="chips"></div>
+
+      <div class="ctl">
+        <div class="seg" role="group" aria-label="条件の組み合わせ">
+          <button type="button" data-mode="or" aria-pressed="true">いずれか</button>
+          <button type="button" data-mode="and" aria-pressed="false">すべて</button>
+        </div>
+        <label class="vh" for="sort">並び替え</label>
+        <select id="sort" class="field">
+          <option value="hits">一致の強さ順</option>
+          <option value="chg">前日比が高い順</option>
+          <option value="vol">出来高が多い順</option>
+          <option value="code">コード順</option>
+        </select>
+        <label class="vh" for="q">銘柄を検索</label>
+        <input id="q" class="field" type="search" placeholder="名前・コードで検索" autocomplete="off">
+      </div>
+
+      <details>
+        <summary>細かい設定</summary>
+        <div class="dbody">
+          <div class="params" id="params"></div>
+          <button type="button" class="linkbtn" id="p-reset">初期値に戻す</button>
+        </div>
+      </details>
+
+      <div class="res-head">
+        <h2>該当する銘柄</h2>
+        <span class="cnt" id="count"></span>
+      </div>
+      <ul class="list" id="list"></ul>
+    </section>
+
+    <section id="v-market" hidden>
+      <div class="mk-top">
+        <label class="vh" for="mk-date">基準日</label>
+        <input id="mk-date" class="field" type="date">
+        <button type="button" class="btn" id="mk-fetch">自動で取得</button>
+        <button type="button" class="btn ghost" id="mk-save">この内容で記録</button>
+      </div>
+      <p class="msg" id="mk-msg" role="status"></p>
+
+      <div class="mk-sum" aria-label="地合いの集計">
+        <div class="mk-bar" id="mk-bar"></div>
+        <div class="mk-cnt" id="mk-cnt"></div>
+      </div>
+
+      <div id="mk-list"></div>
+
+      <h2 class="lab" style="margin-top:6px">今週のひとこと(記事用メモ)</h2>
+      <label class="vh" for="mk-memo">今週のひとこと</label>
+      <textarea id="mk-memo" class="mk-memo" placeholder="例: 米雇用統計の下振れで利上げ観測が後退。日経平均は過熱感あり。"></textarea>
+
+      <div class="panel" style="margin-top:16px">
+        <h2>note用に書き出す</h2>
+        <p>今の内容を、noteにそのまま貼れる文章にします。免責の文も自動で付きます。</p>
+        <div class="btns">
+          <button type="button" class="btn" id="mk-export">文章を作る</button>
+          <button type="button" class="btn ghost" id="mk-copy" hidden>コピー</button>
+        </div>
+        <label class="vh" for="mk-out">書き出した文章</label>
+        <textarea id="mk-out" class="mk-out" readonly hidden></textarea>
+      </div>
+
+      <details>
+        <summary>記録した週 <span class="mono" id="mk-hcnt"></span></summary>
+        <div class="dbody"><ul class="hist" id="mk-hist"></ul></div>
+      </details>
+      <details>
+        <summary>判定のしくみ</summary>
+        <div class="dbody">
+          <p class="fine" style="margin-top:0">株式市場にとっての一般的な関係で「追い風・中立・逆風」に分けています。比べる相手は、基準日より前の最新の記録です。記録がない場合は、自動取得した1週前(月次の指標は前月)の値と比べます。判定ボタンを押すと手動で変えられます。</p>
+          <ul class="rules" id="mk-rules"></ul>
+        </div>
+      </details>
+      <p class="fine">自動取得の元データ: ドル円は欧州中央銀行の参照レート(Frankfurter)。その他は market.json(米セントルイス連銀FRED、財務省、Stooq)。日銀の政策金利と東京都区部コアCPIは手入力です。表示は情報の整理を目的としたもので、売買の推奨ではありません。</p>
+    </section>
+
+    <section id="v-data" hidden>
+      <div class="panel">
+        <h2>使っているデータ</h2>
+        <p id="ds-status"></p>
+        <div class="btns">
+          <label class="btn"><input class="vh" id="file" type="file" accept=".csv,.txt,text/csv,text/plain" multiple>CSVを取り込む</label>
+          <button type="button" class="btn ghost" id="ds-reset" hidden></button>
+        </div>
+        <p class="msg" id="imp-msg" role="status"></p>
+      </div>
+
+      <details>
+        <summary>CSVの形式</summary>
+        <div class="dbody">
+          <p class="fine" style="margin-top:0">1銘柄につき1ファイルの日足データ。1行目に列名が必要です。ファイル名の先頭がコードになります(例: 7203_トヨタ.csv)。コード列がある場合は、複数銘柄を1ファイルにまとめられます。文字コードはUTF-8とShift_JISに対応しています。</p>
+          <pre>日付,始値,高値,安値,終値,出来高
+2026-10-02,2810,2842,2798,2835,5120300
+2026-10-01,2795,2820,2780,2810,4388100</pre>
+          <p class="fine">英語の列名(Date, Open, High, Low, Close, Volume)も使えます。75日線や120日の判定には、120本以上の日足を推奨します。出来高の列がないと、高値ブレイクは検出されません。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>判定のしくみ</summary>
+        <div class="dbody"><dl class="defs" id="defs"></dl></div>
+      </details>
+
+      <p class="fine">取り込んだデータは、この端末のブラウザにだけ保存されます。株価の自動取得は行いません。表示は情報の整理を目的としたもので、売買の推奨ではありません。投資判断はご自身でお願いします。</p>
+    </section>
+  </main>
+</div>
+
+<section class="detail" id="detail" role="dialog" aria-modal="true" aria-label="銘柄のチャート" hidden>
+  <div class="d-bar">
+    <button type="button" class="d-back" id="d-back">‹ 戻る</button>
+    <div class="d-title"><b id="d-name"></b><span id="d-code"></span></div>
+  </div>
+  <div class="d-wrap">
+    <div class="d-quote"><span class="px" id="d-px"></span><span class="chg" id="d-chg"></span><span class="dt" id="d-date"></span></div>
+    <div class="seg" id="d-range" role="group" aria-label="表示期間">
+      <button type="button" data-range="60" aria-pressed="false">3か月</button>
+      <button type="button" data-range="120" aria-pressed="true">6か月</button>
+      <button type="button" data-range="250" aria-pressed="false">1年</button>
+    </div>
+    <div class="d-read" id="d-read" aria-live="polite"></div>
+    <div class="chartbox"><canvas id="d-canvas" role="img" aria-label="ローソク足チャート"></canvas></div>
+    <div class="legend">
+      <span><i style="background:var(--ma1)"></i>5日</span>
+      <span><i style="background:var(--ma2)"></i>25日</span>
+      <span><i style="background:var(--ma3)"></i>75日</span>
+      <span><i style="background:var(--hi)"></i>検出した形</span>
+    </div>
+    <h2 class="lab d-sec">この銘柄で見つかった形</h2>
+    <div id="d-hits"></div>
+    <h2 class="lab d-sec">指標</h2>
+    <dl class="stats" id="d-stats"></dl>
+  </div>
+</section>
+
+<nav class="tabbar" aria-label="画面の切り替え">
+  <button type="button" data-tab="screen" aria-current="page">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg>絞り込み
+  </button>
+  <button type="button" data-tab="market">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 12l4.5-5"/><path d="M12 3.5v2M20.5 12h-2M3.5 12h2"/></svg>地合い
+  </button>
+  <button type="button" data-tab="data">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>データ
+  </button>
+</nav>
+
+<script>
+const KS = (function () {
+  'use strict';
+
+  const DEF_P = { gcDays: 3, brkDays: 60, brkVol: 1.3, sqPct: 10, rsiFloor: 30 };
+
+  /* ---------- 指標 ---------- */
+  function sma(a, n) {
+    const r = new Array(a.length).fill(null);
+    let s = 0;
+    for (let i = 0; i < a.length; i++) {
+      s += a[i];
+      if (i >= n) s -= a[i - n];
+      if (i >= n - 1) r[i] = s / n;
+    }
+    return r;
+  }
+  function maxOf(a, from, to) {
+    let m = -Infinity;
+    for (let i = Math.max(0, from); i <= to; i++) if (a[i] > m) m = a[i];
+    return m;
+  }
+  function rsiCalc(c, n) {
+    const r = new Array(c.length).fill(null);
+    if (c.length <= n) return r;
+    let g = 0, l = 0;
+    for (let i = 1; i <= n; i++) { const d = c[i] - c[i - 1]; if (d >= 0) g += d; else l -= d; }
+    g /= n; l /= n;
+    r[n] = l === 0 ? 100 : 100 - 100 / (1 + g / l);
+    for (let i = n + 1; i < c.length; i++) {
+      const d = c[i] - c[i - 1];
+      g = (g * (n - 1) + Math.max(d, 0)) / n;
+      l = (l * (n - 1) + Math.max(-d, 0)) / n;
+      r[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l);
+    }
+    return r;
+  }
+  function enrich(s) {
+    if (s._ind) return s._ind;
+    const n = s.c.length, x = {};
+    x.ma5 = sma(s.c, 5); x.ma25 = sma(s.c, 25); x.ma75 = sma(s.c, 75);
+    x.ma20 = sma(s.c, 20); x.va = sma(s.v, 20);
+    x.bu = new Array(n).fill(null); x.bl = new Array(n).fill(null); x.bw = new Array(n).fill(null);
+    for (let i = 19; i < n; i++) {
+      const m = x.ma20[i];
+      let q = 0;
+      for (let j = i - 19; j <= i; j++) q += (s.c[j] - m) * (s.c[j] - m);
+      const sd = Math.sqrt(q / 20);
+      x.bu[i] = m + 2 * sd; x.bl[i] = m - 2 * sd;
+      x.bw[i] = m > 0 ? (4 * sd) / m : null;
+    }
+    x.rsi = rsiCalc(s.c, 14);
+    Object.defineProperty(s, '_ind', { value: x, enumerable: false, writable: true });
+    return x;
+  }
+  function pivots(arr, from, to, w, kind) {
+    const out = [];
+    const end = Math.min(to, arr.length - 1 - w);
+    for (let i = Math.max(from, w); i <= end; i++) {
+      let ok = true;
+      for (let j = i - w; j <= i + w; j++) {
+        if (j === i) continue;
+        if (kind === 'low' ? arr[j] < arr[i] : arr[j] > arr[i]) { ok = false; break; }
+      }
+      if (ok) out.push(i);
+    }
+    return out;
+  }
+  function linreg(pts) {
+    const n = pts.length;
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (const [x, y] of pts) { sx += x; sy += y; sxx += x * x; sxy += x * y; }
+    const d = n * sxx - sx * sx;
+    const b = d === 0 ? 0 : (n * sxy - sx * sy) / d;
+    return { a: (sy - b * sx) / n, b };
+  }
+
+  /* ---------- 判定 ---------- */
+  const DET = {
+    gc(s, x, P) {
+      const n = s.c.length;
+      if (n < 80) return null;
+      for (let k = 0; k <= P.gcDays; k++) {
+        const i = n - 1 - k;
+        if (i < 30) break;
+        if (x.ma5[i - 1] <= x.ma25[i - 1] && x.ma5[i] > x.ma25[i] && x.ma25[i] >= x.ma25[i - 5] * 0.995) {
+          return { i, from: i - 5, text: '5日線が25日線を上抜け(' + (k ? k + '日前' : '本日') + ')', score: 100 - k * 10 };
+        }
+      }
+      return null;
+    },
+    po(s, x) {
+      const n = s.c.length, i = n - 1;
+      if (n < 85) return null;
+      const c = s.c[i], a = x.ma5[i], b = x.ma25[i], d = x.ma75[i];
+      if (!(c > a && a > b && b > d)) return null;
+      if (!(b > x.ma25[i - 5] && d > x.ma75[i - 5])) return null;
+      const sp = (a / d - 1) * 100;
+      return { i, from: i - 20, text: '終値>5日>25日>75日線(5日線は75日線の+' + sp.toFixed(1) + '%)', score: Math.min(100, Math.round(sp * 5)) };
+    },
+    pb(s, x) {
+      const n = s.c.length, i = n - 1;
+      if (n < 85) return null;
+      const m = x.ma25, l = x.ma75;
+      if (!(m[i] > m[i - 10] && s.c[i] > l[i] && s.c[i] > m[i])) return null;
+      if (maxOf(s.c, i - 20, i - 3) < m[i] * 1.04) return null;
+      for (let k = 0; k <= 2; k++) {
+        const j = i - k, r = s.l[j] / m[j];
+        if (r <= 1.01 && r >= 0.97) {
+          return { i: j, from: j - 10, text: '上昇中の25日線(' + Math.round(m[j]) + '円)まで押して反発', score: 80 - k * 10 };
+        }
+      }
+      return null;
+    },
+    brk(s, x, P) {
+      const n = s.c.length, L = P.brkDays;
+      if (n < L + 5) return null;
+      for (let k = 0; k <= 2; k++) {
+        const i = n - 1 - k;
+        const hh = maxOf(s.h, i - L, i - 1);
+        const hhPrev = maxOf(s.h, i - 1 - L, i - 2);
+        const va = x.va[i - 1];
+        const ratio = va > 0 ? s.v[i] / va : 0;
+        if (s.c[i] > hh && s.c[i - 1] <= hhPrev && ratio >= P.brkVol) {
+          return {
+            i, from: i - L,
+            text: L + '日高値を終値で更新(出来高' + ratio.toFixed(1) + '倍)',
+            score: Math.min(100, Math.round(ratio * 30)) - k * 5,
+            lines: [{ x1: i - L, y1: hh, x2: n - 1, y2: hh }]
+          };
+        }
+      }
+      return null;
+    },
+    sq(s, x, P) {
+      const n = s.c.length, i = n - 1;
+      if (n < 130 || x.bw[i] == null) return null;
+      let lower = 0, cnt = 0;
+      for (let j = i - 119; j <= i; j++) {
+        if (x.bw[j] == null) continue;
+        cnt++;
+        if (x.bw[j] < x.bw[i]) lower++;
+      }
+      if (cnt < 100) return null;
+      const pct = (lower / cnt) * 100;
+      if (pct > P.sqPct) return null;
+      return {
+        i, from: i - 19,
+        text: 'バンド幅が過去120日で下位' + Math.max(1, Math.round(pct)) + '%(幅' + (x.bw[i] * 100).toFixed(1) + '%)',
+        score: Math.round(100 - pct * 5)
+      };
+    },
+    tri(s, x) {
+      const n = s.c.length, W = 50;
+      if (n < W + 10) return null;
+      const st = n - W;
+      const ph = pivots(s.h, st, n - 1, 3, 'high'), pl = pivots(s.l, st, n - 1, 3, 'low');
+      if (ph.length < 2 || pl.length < 2) return null;
+      if (ph[ph.length - 1] - ph[0] < 15 || pl[pl.length - 1] - pl[0] < 15) return null;
+      const fh = linreg(ph.map(i => [i, s.h[i]])), fl = linreg(pl.map(i => [i, s.l[i]]));
+      if (!(fh.b < 0 && fl.b > 0)) return null;
+      const top = t => fh.a + fh.b * t, bot = t => fl.a + fl.b * t;
+      const w0 = top(st) - bot(st), w1 = top(n - 1) - bot(n - 1);
+      if (!(w0 > 0 && w1 > 0 && w1 / w0 <= 0.6)) return null;
+      const c = s.c[n - 1];
+      if (c > top(n - 1) * 1.01 || c < bot(n - 1) * 0.99) return null;
+      const ratio = Math.round((w1 / w0) * 100);
+      return {
+        i: n - 1, from: st,
+        text: '高値切り下げ・安値切り上げ(値幅が' + ratio + '%に収束)',
+        score: 100 - ratio,
+        lines: [
+          { x1: st, y1: top(st), x2: n - 1, y2: top(n - 1) },
+          { x1: st, y1: bot(st), x2: n - 1, y2: bot(n - 1) }
+        ]
+      };
+    },
+    db(s, x) {
+      const n = s.c.length;
+      if (n < 100) return null;
+      const i = n - 1;
+      const pl = pivots(s.l, n - 90, n - 1, 4, 'low');
+      if (pl.length < 2) return null;
+      for (let bi = pl.length - 1; bi >= 1; bi--) {
+        const b = pl[bi];
+        if (b < n - 45) break;
+        for (let ai = bi - 1; ai >= 0; ai--) {
+          const a = pl[ai];
+          if (b - a < 10) continue;
+          if (b - a > 70) break;
+          const la = s.l[a], lb = s.l[b], lo = Math.min(la, lb);
+          const diff = Math.abs(la - lb) / lo;
+          if (diff > 0.03) continue;
+          const neck = maxOf(s.h, a, b);
+          if (neck / lo - 1 < 0.05) continue;
+          if (s.c[i] < neck * 0.97 || s.c[i] > neck * 1.08) continue;
+          const above = s.c[i] >= neck;
+          return {
+            i, from: a,
+            text: 'ダブルボトム(安値差' + (diff * 100).toFixed(1) + '%、ネック' + Math.round(neck) + '円' +
+              (above ? 'を上抜け)' : 'まであと' + ((neck / s.c[i] - 1) * 100).toFixed(1) + '%)'),
+            score: above ? 90 : 70,
+            lines: [{ x1: a, y1: neck, x2: n - 1, y2: neck }],
+            marks: [a, b]
+          };
+        }
+      }
+      return null;
+    },
+    rsi(s, x, P) {
+      const n = s.c.length, i = n - 1;
+      if (n < 30 || x.rsi[i] == null) return null;
+      let mn = 100, mk = -1;
+      for (let k = 1; k <= 5; k++) {
+        const r = x.rsi[i - k];
+        if (r != null && r < mn) { mn = r; mk = i - k; }
+      }
+      if (mn >= P.rsiFloor) return null;
+      if (!(x.rsi[i] > mn + 3 && x.rsi[i] <= 55)) return null;
+      return {
+        i, from: mk,
+        text: 'RSIが' + mn.toFixed(0) + 'まで低下後、' + x.rsi[i].toFixed(0) + 'へ反発',
+        score: Math.round(Math.min(100, (P.rsiFloor - mn) * 4 + 40))
+      };
+    },
+    ms(s) {
+      const n = s.c.length;
+      if (n < 40) return null;
+      for (let k = 0; k <= 1; k++) {
+        const i = n - 1 - k, i1 = i - 2, i2 = i - 1;
+        const o1 = s.o[i1], c1 = s.c[i1], o2 = s.o[i2], c2 = s.c[i2], o3 = s.o[i], c3 = s.c[i];
+        const body1 = o1 - c1;
+        if (!(body1 / o1 >= 0.015)) continue;
+        if (!(Math.abs(o2 - c2) <= 0.4 * body1 && Math.max(o2, c2) < c1)) continue;
+        if (!(c3 > o3 && c3 > (o1 + c1) / 2 && c3 - o3 >= 0.5 * body1)) continue;
+        if (!(s.c[i1] < s.c[i1 - 6])) continue;
+        return { i, from: i1, text: '明けの明星が' + (k ? k + '日前に' : '本日') + '確定', score: 90 - k * 10, marks: [i1, i2, i] };
+      }
+      return null;
+    }
+  };
+
+  const PATTERNS = [
+    { id: 'gc', group: 'トレンド', name: 'ゴールデンクロス',
+      def: P => '5日移動平均線が25日線を下から上へ抜けた日が直近' + P.gcDays + '日以内。25日線が横ばいか上向き(5日前比-0.5%以内)であること。' },
+    { id: 'po', group: 'トレンド', name: 'パーフェクトオーダー',
+      def: () => '終値 > 5日線 > 25日線 > 75日線の並びで、25日線と75日線がどちらも5日前より上向き。' },
+    { id: 'pb', group: 'トレンド', name: '25日線の押し目',
+      def: () => '25日線が10日前より上向きで、終値が25日線と75日線の上。直近20日(3日前まで)に25日線の+4%以上へ上昇し、直近3日のうちに安値が25日線の-3%〜+1%に入り、現在は25日線の上。' },
+    { id: 'brk', group: 'ブレイク', name: '高値ブレイク',
+      def: P => '直近3日以内に、終値が' + P.brkDays + '日間の高値を更新(前日までは未更新)し、その日の出来高が20日平均の' + P.brkVol + '倍以上。' },
+    { id: 'sq', group: 'ブレイク', name: 'バンド収縮',
+      def: P => 'ボリンジャーバンド(20日・±2σ)の幅が、過去120日の下位' + P.sqPct + '%以内。値動きが小さく収束している状態。' },
+    { id: 'tri', group: 'ブレイク', name: '三角持ち合い',
+      def: () => '直近50日で、高値の切り下がりと安値の切り上がりが同時に起き、値幅が50日前の60%以下に縮小。終値は両ラインの内側。' },
+    { id: 'db', group: '反転', name: 'ダブルボトム',
+      def: () => '直近90日内に、10〜70日離れた2つの安値が3%以内で並び、間の戻り高値(ネックライン)が安値より5%以上高い。終値がネックラインの-3%〜+8%。' },
+    { id: 'rsi', group: '反転', name: 'RSI反発',
+      def: P => '直近5日以内にRSI(14日)が' + P.rsiFloor + '未満まで低下し、現在は最低値から3pt以上戻して55以下。' },
+    { id: 'ms', group: '反転', name: '明けの明星',
+      def: () => '酒田五法の三川明けの明星。下落中に、①実体1.5%以上の長い陰線、②その終値より下に収まる小さな実体、③陰線の実体の中心を超える陽線が連続。直近2日以内に確定。' }
+  ];
+
+  function evalAll(s, P) {
+    const x = enrich(s), out = {};
+    for (const p of PATTERNS) {
+      try {
+        const d = DET[p.id](s, x, P);
+        if (d) out[p.id] = d;
+      } catch (e) { /* 不正なデータは該当なし扱い */ }
+    }
+    return out;
+  }
+
+  /* ---------- CSV取り込み ---------- */
+  const HEAD = {
+    date: ['date', '日付', '年月日', '日時'],
+    open: ['open', '始値'],
+    high: ['high', '高値'],
+    low: ['low', '安値'],
+    close: ['close', '終値'],
+    volume: ['volume', '出来高'],
+    code: ['code', 'コード', 'ticker', 'symbol', '銘柄コード'],
+    name: ['name', '銘柄名', '銘柄']
+  };
+  function splitLine(line, d) {
+    const out = [];
+    let cur = '', q = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (q) {
+        if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+        else cur += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === d) { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out.map(x => x.trim());
+  }
+  const pad2 = v => String(v).padStart(2, '0');
+  function parseCSV(text, fname) {
+    text = text.replace(/^﻿/, '');
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) throw new Error('データ行がありません');
+    const d = lines[0].indexOf('\t') >= 0 ? '\t' : ',';
+    const head = splitLine(lines[0], d).map(h => h.toLowerCase().replace(/\s+/g, ''));
+    const ix = {};
+    for (const k in HEAD) ix[k] = head.findIndex(h => HEAD[k].indexOf(h) >= 0);
+    if (ix.date < 0 || ix.close < 0) throw new Error('「日付」と「終値」の列が見つかりません');
+    const base = String(fname || 'data').replace(/\.[^.]+$/, '');
+    const parts = base.split(/[_\s]+/);
+    const fileCode = parts[0].replace(/\.T$/i, '') || 'DATA';
+    const fileName = parts.length > 1 ? parts.slice(1).join(' ') : fileCode;
+    const groups = new Map();
+    for (let li = 1; li < lines.length; li++) {
+      const c = splitLine(lines[li], d);
+      const m = /(\d{4})\D+(\d{1,2})\D+(\d{1,2})/.exec(c[ix.date] || '');
+      if (!m) continue;
+      const num = k => (ix[k] >= 0 ? parseFloat(String(c[ix[k]]).replace(/,/g, '')) : NaN);
+      const cl = num('close');
+      if (!isFinite(cl) || cl <= 0) continue;
+      let op = num('open'), hi = num('high'), lo = num('low'), vo = num('volume');
+      if (!isFinite(op)) op = cl;
+      if (!isFinite(hi)) hi = Math.max(op, cl);
+      if (!isFinite(lo)) lo = Math.min(op, cl);
+      if (!isFinite(vo)) vo = 0;
+      const key = ix.code >= 0 ? (c[ix.code] || fileCode).replace(/\.T$/i, '') : fileCode;
+      if (!groups.has(key)) groups.set(key, { name: ix.name >= 0 && c[ix.name] ? c[ix.name] : (ix.code >= 0 ? key : fileName), rows: new Map() });
+      groups.get(key).rows.set(m[1] + '-' + pad2(m[2]) + '-' + pad2(m[3]), [op, hi, lo, cl, vo]);
+    }
+    const stocks = [];
+    for (const [code, g] of groups) {
+      const ds = Array.from(g.rows.keys()).sort();
+      if (ds.length < 30) continue;
+      const s = { code, name: g.name, d: ds, o: [], h: [], l: [], c: [], v: [] };
+      for (const k of ds) {
+        const r = g.rows.get(k);
+        s.o.push(r[0]); s.h.push(Math.max(r[1], r[0], r[3])); s.l.push(Math.min(r[2], r[0], r[3])); s.c.push(r[3]); s.v.push(r[4]);
+      }
+      stocks.push(s);
+    }
+    if (!stocks.length) throw new Error('30本以上の日足がある銘柄がありません');
+    return stocks;
+  }
+
+  /* ---------- 架空サンプル ---------- */
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gauss(r) {
+    let u = 0, v = 0;
+    while (!u) u = r();
+    while (!v) v = r();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  function walk(r, segs, start) {
+    const out = [];
+    let p = start;
+    for (const [len, dr, vol] of segs) {
+      for (let k = 0; k < len; k++) { p *= Math.exp(dr + vol * gauss(r)); out.push(p); }
+    }
+    return out;
+  }
+  function bizDays(n, endStr) {
+    const out = [];
+    let t = new Date(endStr + 'T00:00:00Z').getTime();
+    while (out.length < n) {
+      const dt = new Date(t), w = dt.getUTCDay();
+      if (w !== 0 && w !== 6) out.push(dt.toISOString().slice(0, 10));
+      t -= 86400000;
+    }
+    return out.reverse();
+  }
+  const SECTORS = ['架空精機', '架空電子', '架空薬品', '架空食品', '架空運輸', '架空建設', '架空化学', '架空通信'];
+
+  function gen(type, seed, dates, idx) {
+    const r = mulberry32(seed), n = dates.length, T = 120;
+    const startP = 300 + Math.floor(r() * r() * 5200);
+    const pre = walk(r, [[n - T, -0.0008 + 0.0025 * r(), 0.011 + 0.004 * r()]], startP);
+    const p0 = pre[pre.length - 1];
+    let tail, ovOpen = null;
+    switch (type) {
+      case 'gc': {
+        const R = 3 + Math.floor(r() * 6);
+        tail = walk(r, [[88, -0.003 - 0.001 * r(), 0.011], [T - 88 - R, 0.0003, 0.007], [R, 0.011 + 0.006 * r(), 0.008]], p0);
+        break;
+      }
+      case 'po':
+        tail = walk(r, [[65, 0.0006, 0.01], [55, 0.0033 + 0.002 * r(), 0.009]], p0);
+        break;
+      case 'pb': {
+        const R = 1 + Math.floor(r() * 3);
+        tail = walk(r, [[60, 0.0006, 0.01], [45, 0.003 + 0.002 * r(), 0.008], [15 - R, -(0.003 + 0.004 * r()), 0.006], [R, 0.006 + 0.006 * r(), 0.005]], p0);
+        break;
+      }
+      case 'brk': {
+        const m = Math.floor(r() * 3);
+        tail = walk(r, [[119 - m, 0.0002, 0.007], [1, 0.035 + 0.02 * r(), 0.003], [m, 0.002, 0.006]], p0);
+        break;
+      }
+      case 'sq':
+        tail = walk(r, [[65, 0.0013, 0.016], [55, 0.0001, 0.0028 + 0.001 * r()]], p0);
+        break;
+      case 'db': {
+        const a1 = 22 + Math.floor(r() * 6), b1 = 12 + Math.floor(r() * 4), c1 = 12 + Math.floor(r() * 4), d1 = 14 + Math.floor(r() * 4);
+        const rem = T - 36 - a1 - b1 - c1 - d1;
+        if (rem < 2) return null;
+        tail = walk(r, [[36, 0, 0.008], [a1, -0.0085, 0.006], [b1, 0.0075, 0.006], [c1, -0.0075, 0.006], [d1, 0.0078, 0.006], [rem, 0.0002, 0.005]], p0);
+        break;
+      }
+      case 'tri': {
+        const A0 = 0.06 + 0.03 * r(), per = 11 + Math.floor(r() * 5);
+        const lead = walk(r, [[70, 0.003, 0.01]], p0);
+        const L = lead[69];
+        tail = lead.concat(Array.from({ length: 50 }, (_, t) =>
+          L * (1 + (A0 * (1 - t / 50) + 0.006) * Math.sin((2 * Math.PI * (t + 1)) / per) + 0.002 * gauss(r))));
+        break;
+      }
+      case 'rsi': {
+        const R = 2 + Math.floor(r() * 3);
+        tail = walk(r, [[T - 14 - R, 0.0012, 0.009], [14, -(0.016 + 0.004 * r()), 0.007], [R, 0.010 + 0.010 * r(), 0.006]], p0);
+        break;
+      }
+      case 'ms': {
+        const base = walk(r, [[117, -0.0035, 0.008]], p0);
+        const c0 = base[116], c1 = c0 * 0.97, o2 = c1 * 0.992, c2 = o2 * 0.9995, o3 = c2 * 1.001, c3 = o3 * 1.045;
+        tail = base.concat([c1, c2, c3]);
+        ovOpen = { [n - 3]: c0, [n - 2]: o2, [n - 1]: o3 };
+        break;
+      }
+      default:
+        tail = walk(r, [[T, -0.003 + 0.005 * r(), 0.010 + 0.008 * r()]], p0);
+    }
+    if (!tail || tail.length !== T) return null;
+    const closes = pre.concat(tail);
+    const rd = x => (x >= 1000 ? Math.round(x) : Math.round(x * 10) / 10);
+    const vb = 80000 + Math.floor(r() * 3000000);
+    const s = { code: 'SMP' + pad2(idx), name: SECTORS[idx % SECTORS.length] + ' ' + pad2(idx), d: dates.slice(), o: [], h: [], l: [], c: [], v: [] };
+    for (let i = 0; i < n; i++) {
+      const prev = i ? closes[i - 1] : closes[0], cl = closes[i];
+      const op = ovOpen && ovOpen[i] != null ? ovOpen[i] : prev * (1 + 0.003 * gauss(r));
+      const hi = Math.max(op, cl) * (1 + Math.abs(gauss(r)) * 0.004 + 0.0008);
+      const lo = Math.min(op, cl) * (1 - Math.abs(gauss(r)) * 0.004 - 0.0008);
+      const vol = vb * (0.7 + 0.6 * r()) * (1 + 14 * Math.abs(cl / prev - 1));
+      s.o.push(rd(op)); s.h.push(rd(hi)); s.l.push(rd(lo)); s.c.push(rd(cl)); s.v.push(Math.round(vol / 100) * 100);
+    }
+    return s;
+  }
+
+  function makeSample() {
+    const plan = [['gc', 4], ['po', 5], ['brk', 4], ['pb', 4], ['sq', 4], ['db', 4], ['tri', 3], ['rsi', 4], ['ms', 3], ['rand', 13]];
+    const dates = bizDays(300, '2026-10-02');
+    const stocks = [];
+    let idx = 0;
+    for (const [type, cnt] of plan) {
+      for (let q = 0; q < cnt; q++) {
+        idx++;
+        let st = null, last = null;
+        for (let t = 0; t < 700 && !st; t++) {
+          const cand = gen(type, idx * 7919 + t * 104729 + 13, dates, idx);
+          if (!cand) continue;
+          last = cand;
+          if (type === 'rand' || DET[type](cand, enrich(cand), DEF_P)) st = cand;
+        }
+        stocks.push(st || last);
+      }
+    }
+    return stocks;
+  }
+
+  const api = { DEF_P, PATTERNS, enrich, evalAll, parseCSV, makeSample };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  return api;
+})();
+
+(function () {
+  'use strict';
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const LS = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+    del(k) { try { localStorage.removeItem(k); } catch (e) { /* 保存できない環境 */ } }
+  };
+
+  /* 形ごとの小さな図(26x15) */
+  const GLYPH = {
+    gc: '<path d="M1 13C9 13 13 6 25 2"/><path d="M1 6L25 10" opacity=".5"/>',
+    po: '<path d="M1 14L25 8"/><path d="M1 9.5L25 4" opacity=".7"/><path d="M1 5L25 0.8" opacity=".45"/>',
+    pb: '<path d="M1 13L9 4L13 8L19 2.5L25 1"/>',
+    brk: '<path d="M1 10L5 8L9 10L13 8L16 9L18 3L25 1"/><path d="M1 7.5H25" stroke-dasharray="2 2" opacity=".5"/>',
+    sq: '<path d="M1 2L5 13L9 3.5L13 11L17 5.5L21 9L25 7.5"/>',
+    tri: '<path d="M1 1.5L6 13L10 4L14 11L18 6L25 8"/><path d="M1 1.5L25 7M1 13L25 8.5" opacity=".4"/>',
+    db: '<path d="M1 2L7 13L13 5L19 13L25 2"/>',
+    rsi: '<path d="M1 2L11 13L15 10L25 3"/>',
+    ms: '<rect x="2" y="1.5" width="5" height="8"/><path d="M4.5 0.5V1.5M4.5 9.5V11"/><rect x="10.5" y="10" width="5" height="2.5"/><path d="M13 9V10M13 12.5V14"/><rect x="19" y="4" width="5" height="8"/><path d="M21.5 2V4M21.5 12V13.5"/>'
+  };
+  const gsvg = id => '<svg viewBox="0 0 26 15" aria-hidden="true">' + GLYPH[id] + '</svg>';
+
+  const PARAMS = [
+    { k: 'gcDays', label: 'ゴールデンクロス: 何日以内', min: 1, max: 10, step: 1, unit: '日' },
+    { k: 'brkDays', label: '高値ブレイク: 高値の期間', min: 20, max: 120, step: 10, unit: '日' },
+    { k: 'brkVol', label: '高値ブレイク: 出来高倍率', min: 1, max: 3, step: 0.1, unit: '倍' },
+    { k: 'sqPct', label: 'バンド収縮: 下位何%', min: 3, max: 30, step: 1, unit: '%' },
+    { k: 'rsiFloor', label: 'RSI: 売られすぎの基準', min: 10, max: 40, step: 1, unit: '' }
+  ];
+
+  const S = {
+    stocks: [], source: 'sample', sel: new Set(['gc', 'brk', 'pb']), mode: 'or', sort: 'hits', q: '',
+    P: Object.assign({}, KS.DEF_P), tab: 'screen', detail: null, range: 120, cross: null, focus: null, rows: [], resetArmed: false
+  };
+
+  /* ---------- 保存・読み込み ---------- */
+  function savePrefs() { LS.set('keisen.prefs', { sel: Array.from(S.sel), mode: S.mode, sort: S.sort, P: S.P }); }
+  function loadPrefs() {
+    const p = LS.get('keisen.prefs');
+    if (!p) return;
+    if (Array.isArray(p.sel)) S.sel = new Set(p.sel.filter(id => KS.PATTERNS.some(x => x.id === id)));
+    if (p.mode === 'and' || p.mode === 'or') S.mode = p.mode;
+    if (['hits', 'chg', 'vol', 'code'].indexOf(p.sort) >= 0) S.sort = p.sort;
+    if (p.P) for (const k in KS.DEF_P) { const v = Number(p.P[k]); if (isFinite(v)) S.P[k] = v; }
+  }
+  function loadData() {
+    const d = LS.get('keisen.data');
+    if (Array.isArray(d) && d.length) { S.stocks = d; S.source = 'imported'; }
+    else { S.stocks = KS.makeSample(); S.source = 'sample'; }
+  }
+  function saveData() {
+    const slim = S.stocks.map(s => ({ code: s.code, name: s.name, d: s.d, o: s.o, h: s.h, l: s.l, c: s.c, v: s.v }));
+    return LS.set('keisen.data', slim);
+  }
+
+  /* ---------- 計算 ---------- */
+  function recompute() {
+    for (const s of S.stocks) s._ev = KS.evalAll(s, S.P);
+    buildRows();
+  }
+  function buildRows() {
+    const q = S.q.trim().toLowerCase(), sel = Array.from(S.sel), rows = [];
+    for (const s of S.stocks) {
+      if (q && s.code.toLowerCase().indexOf(q) < 0 && s.name.toLowerCase().indexOf(q) < 0) continue;
+      const ev = s._ev || {};
+      const hit = KS.PATTERNS.map(p => p.id).filter(id => sel.indexOf(id) >= 0 && ev[id]);
+      const ok = sel.length === 0 ? true : S.mode === 'and' ? hit.length === sel.length : hit.length > 0;
+      if (!ok) continue;
+      const n = s.c.length, last = s.c[n - 1], prev = n > 1 ? s.c[n - 2] : last;
+      const va = KS.enrich(s).va[n - 1];
+      rows.push({
+        s, hit, last, chg: (last / prev - 1) * 100, vr: va > 0 ? s.v[n - 1] / va : 0,
+        score: hit.reduce((a, id) => a + ev[id].score, 0)
+      });
+    }
+    const cmp = {
+      hits: (a, b) => b.hit.length - a.hit.length || b.score - a.score || a.s.code.localeCompare(b.s.code),
+      chg: (a, b) => b.chg - a.chg,
+      vol: (a, b) => b.vr - a.vr,
+      code: (a, b) => a.s.code.localeCompare(b.s.code)
+    }[S.sort];
+    rows.sort(cmp);
+    S.rows = rows;
+  }
+
+  /* ---------- 表示用の整形 ---------- */
+  const fmtPx = v => Number(v.toFixed(2)).toLocaleString('ja-JP');
+  const fmtPct = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+  const fmtVol = v => (v >= 10000 ? Math.round(v / 10000).toLocaleString('ja-JP') + '万' : String(Math.round(v)));
+  const md = d => Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10));
+
+  function spark(s) {
+    const n = s.c.length, m = Math.min(60, n), a = s.c.slice(n - m);
+    const mn = Math.min.apply(null, a), mx = Math.max.apply(null, a), W = 300, H = 44, p = 3;
+    const X = i => p + ((W - 2 * p) * i) / (m - 1 || 1);
+    const Y = v => p + (H - 2 * p) * (1 - (v - mn) / (mx - mn || 1));
+    const pts = a.map((v, i) => X(i).toFixed(1) + ',' + Y(v).toFixed(1)).join(' ');
+    const cls = a[m - 1] >= a[0] ? 'up' : 'dn';
+    return '<svg class="spark ' + cls + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' +
+      '<polygon points="' + pts + ' ' + X(m - 1).toFixed(1) + ',' + H + ' ' + X(0).toFixed(1) + ',' + H + '" fill="currentColor" opacity=".1"/>' +
+      '<polyline points="' + pts + '" fill="none" stroke="currentColor" stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+  }
+  const pat = id => KS.PATTERNS.find(p => p.id === id);
+
+  /* ---------- 画面の描画 ---------- */
+  function renderChips() {
+    const groups = Array.from(new Set(KS.PATTERNS.map(p => p.group)));
+    $('#chips').innerHTML = groups.map(g =>
+      '<div class="grp"><h2 class="lab">' + g + '</h2><div class="chips">' +
+      KS.PATTERNS.filter(p => p.group === g).map(p =>
+        '<button type="button" class="chip" data-id="' + p.id + '" aria-pressed="' + S.sel.has(p.id) + '">' + gsvg(p.id) + '<span>' + p.name + '</span></button>'
+      ).join('') + '</div></div>').join('');
+  }
+  function renderParams() {
+    $('#params').innerHTML = PARAMS.map(p =>
+      '<label class="pf"><span>' + p.label + '</span><span class="in"><input id="p-' + p.k + '" type="number" inputmode="decimal" min="' + p.min + '" max="' + p.max + '" step="' + p.step + '" value="' + S.P[p.k] + '"><em>' + p.unit + '</em></span></label>'
+    ).join('');
+  }
+  function renderResults() {
+    const total = S.stocks.length;
+    $('#count').textContent = S.rows.length + ' / ' + total + ' 銘柄';
+    const list = $('#list');
+    if (!S.rows.length) {
+      list.innerHTML = '<li class="empty">' + (S.sel.size === 0 ? '' : '条件に合う銘柄がありません。「いずれか」に切り替えるか、細かい設定を緩めてください。') + '</li>';
+      return;
+    }
+    list.innerHTML = S.rows.map(r => {
+      const s = r.s, ev = s._ev;
+      return '<li><button type="button" class="row" data-code="' + esc(s.code) + '">' +
+        '<span class="r-head"><span class="r-name">' + esc(s.name) + '</span><span class="r-px">' + fmtPx(r.last) + '</span>' +
+        '<span class="r-code">' + esc(s.code) + '</span><span class="r-chg ' + (r.chg >= 0 ? 'up' : 'dn') + '">' + fmtPct(r.chg) + '</span></span>' +
+        spark(s) +
+        '<span class="r-hits">' + r.hit.map(id => '<span class="hit">' + gsvg(id) + '<span><b>' + pat(id).name + '</b>' + esc(ev[id].text) + '</span></span>').join('') + '</span>' +
+        '</button></li>';
+    }).join('');
+  }
+  function renderHeader() {
+    let last = '';
+    for (const s of S.stocks) { const d = s.d[s.d.length - 1]; if (d > last) last = d; }
+    $('#asof').textContent = last ? last + ' 終値まで' : '';
+    $('#srcnote').hidden = S.source !== 'sample';
+    $('#srcnote').textContent = 'サンプル(架空の値動き)で表示中です。「データ」から自分のCSVを取り込めます。';
+  }
+  function renderData() {
+    const imp = S.source === 'imported';
+    $('#ds-status').textContent = imp
+      ? '取り込み済みの ' + S.stocks.length + ' 銘柄を使っています。同じコードのCSVを取り込むと上書きされます。'
+      : '架空の値動きで作ったサンプル ' + S.stocks.length + ' 銘柄を使っています。実際の株価ではありません。';
+    const b = $('#ds-reset');
+    b.hidden = !imp;
+    b.textContent = S.resetArmed ? 'もう一度押すと消去します' : '取り込みデータを消去';
+  }
+  function renderDefs() {
+    $('#defs').innerHTML = KS.PATTERNS.map(p => '<div><dt>' + gsvg(p.id) + p.name + '</dt><dd>' + p.def(S.P) + '</dd></div>').join('');
+  }
+  function renderAll() {
+    renderHeader(); renderResults(); renderData(); renderDefs();
+    $$('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === S.mode)));
+    $('#sort').value = S.sort;
+  }
+  function refresh() { buildRows(); renderResults(); }
+
+  /* ---------- タブ ---------- */
+  function setTab(t) {
+    S.tab = t;
+    $('#v-screen').hidden = t !== 'screen';
+    $('#v-data').hidden = t !== 'data';
+    $('#v-market').hidden = t !== 'market';
+    $$('.tabbar button').forEach(b => { if (b.dataset.tab === t) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+    window.scrollTo(0, 0);
+  }
+
+  /* ---------- 取り込み ---------- */
+  async function readText(file) {
+    const buf = await file.arrayBuffer();
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch (e) { return new TextDecoder('shift_jis').decode(buf); }
+  }
+  async function importFiles(files) {
+    const msg = $('#imp-msg');
+    msg.className = 'msg';
+    msg.textContent = '読み込み中…';
+    const map = new Map(S.source === 'imported' ? S.stocks.map(s => [s.code, s]) : []);
+    let added = 0;
+    const errs = [];
+    for (const f of files) {
+      try {
+        for (const st of KS.parseCSV(await readText(f), f.name)) { map.set(st.code, st); added++; }
+      } catch (e) { errs.push(f.name + ': ' + e.message); }
+    }
+    if (added) {
+      S.stocks = Array.from(map.values());
+      S.source = 'imported';
+      const saved = saveData();
+      recompute(); renderAll();
+      msg.textContent = added + '銘柄を取り込みました。' + (saved ? '' : '(保存容量が足りないため、この画面を閉じると消えます)');
+    }
+    if (errs.length) {
+      msg.className = 'msg err';
+      msg.textContent = (added ? msg.textContent + ' ' : '') + errs.join(' / ');
+    }
+    $('#file').value = '';
+  }
+
+  /* ---------- 詳細 ---------- */
+  function focusId() {
+    const ev = S.detail._ev || {};
+    if (S.focus && ev[S.focus]) return S.focus;
+    for (const id of S.sel) if (ev[id]) return id;
+    return KS.PATTERNS.map(p => p.id).find(id => ev[id]) || null;
+  }
+  function openDetail(code) {
+    const s = S.stocks.find(x => x.code === code);
+    if (!s) return;
+    S.detail = s; S.cross = null; S.focus = null;
+    $('#detail').hidden = false;
+    $('#detail').scrollTop = 0;
+    document.documentElement.style.overflow = 'hidden';
+    renderDetail();
+    $('#d-back').focus();
+  }
+  function closeDetail() {
+    $('#detail').hidden = true;
+    document.documentElement.style.overflow = '';
+    S.detail = null;
+  }
+  function renderDetail() {
+    const s = S.detail;
+    if (!s) return;
+    const n = s.c.length, x = KS.enrich(s), last = s.c[n - 1], prev = n > 1 ? s.c[n - 2] : last, chg = (last / prev - 1) * 100;
+    $('#d-name').textContent = s.name;
+    $('#d-code').textContent = s.code;
+    $('#d-px').textContent = fmtPx(last);
+    const c = $('#d-chg');
+    c.textContent = fmtPct(chg);
+    c.className = 'chg ' + (chg >= 0 ? 'up' : 'dn');
+    $('#d-date').textContent = s.d[n - 1];
+    $$('#d-range button').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.range) === S.range)));
+    const ev = s._ev || {}, fid = focusId();
+    const ids = KS.PATTERNS.map(p => p.id).filter(id => ev[id]);
+    $('#d-hits').innerHTML = ids.length
+      ? ids.map(id => '<button type="button" class="hitbtn" data-focus="' + id + '" aria-pressed="' + (id === fid) + '">' + gsvg(id) + '<span><b>' + pat(id).name + '</b>' + esc(ev[id].text) + '</span></button>').join('')
+      : '<p class="fine" style="margin:0">いま当てはまる形はありません。</p>';
+    const i = n - 1, h250 = Math.max.apply(null, s.h.slice(Math.max(0, n - 250)));
+    const st = [
+      ['RSI(14日)', x.rsi[i] != null ? x.rsi[i].toFixed(1) : '-'],
+      ['バンド幅', x.bw[i] != null ? (x.bw[i] * 100).toFixed(1) + '%' : '-'],
+      ['25日線との乖離', x.ma25[i] ? fmtPct((last / x.ma25[i] - 1) * 100) : '-'],
+      ['75日線との乖離', x.ma75[i] ? fmtPct((last / x.ma75[i] - 1) * 100) : '-'],
+      ['出来高(20日平均比)', x.va[i] > 0 ? (s.v[i] / x.va[i]).toFixed(1) + '倍' : '-'],
+      ['直近1年高値との差', fmtPct((last / h250 - 1) * 100)]
+    ];
+    $('#d-stats').innerHTML = st.map(r => '<div><dt>' + r[0] + '</dt><dd>' + r[1] + '</dd></div>').join('');
+    drawChart();
+  }
+  function readout(idx) {
+    const s = S.detail, o = s.o[idx], h = s.h[idx], l = s.l[idx], c = s.c[idx], pc = idx ? s.c[idx - 1] : c;
+    const g = (c / pc - 1) * 100;
+    $('#d-read').innerHTML = '<b>' + s.d[idx] + '</b>  始 ' + fmtPx(o) + '  高 ' + fmtPx(h) + '  安 ' + fmtPx(l) + '  終 <b>' + fmtPx(c) + '</b> (' + fmtPct(g) + ')<br>出来高 ' + fmtVol(s.v[idx]);
+  }
+  function niceStep(raw) {
+    const p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+    return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
+  }
+  function drawChart() {
+    const s = S.detail;
+    if (!s) return;
+    const cv = $('#d-canvas'), W = cv.parentElement.clientWidth, H = 330;
+    if (!W) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    cv.style.height = H + 'px';
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const css = getComputedStyle(document.documentElement), col = k => css.getPropertyValue(k).trim();
+    const n = s.c.length, x = KS.enrich(s), m = Math.min(S.range, n), a = n - m;
+    const axisW = 48, padT = 6, volH = 52, xH = 18, gap = 8;
+    const pw = W - axisW, ph = H - padT - volH - xH - gap;
+    const pTop = padT, vTop = pTop + ph + gap, vBot = vTop + volH;
+    let hi = -Infinity, lo = Infinity, vmax = 0;
+    for (let i = a; i < n; i++) { hi = Math.max(hi, s.h[i]); lo = Math.min(lo, s.l[i]); vmax = Math.max(vmax, s.v[i]); }
+    const pad = (hi - lo) * 0.06 || hi * 0.02;
+    hi += pad; lo -= pad;
+    const X = i => ((i - a + 0.5) / m) * pw, Y = v => pTop + ((hi - v) / (hi - lo)) * ph;
+    const cw = pw / m;
+
+    g.font = '10px ' + col('--f-mono');
+    g.textBaseline = 'middle';
+    const step = niceStep((hi - lo) / 4);
+    g.lineWidth = 1;
+    for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) {
+      const y = Math.round(Y(t)) + 0.5;
+      g.strokeStyle = col('--line'); g.beginPath(); g.moveTo(0, y); g.lineTo(pw, y); g.stroke();
+      g.fillStyle = col('--muted'); g.textAlign = 'left'; g.fillText(fmtPx(Number(t.toPrecision(6))), pw + 5, y);
+    }
+
+    const ev = s._ev || {}, fid = focusId(), d = fid ? ev[fid] : null;
+    if (d) {
+      const x0 = Math.max(0, X(Math.max(d.from, a)) - cw / 2), x1 = Math.min(pw, X(d.i) + cw / 2);
+      g.fillStyle = col('--hi'); g.globalAlpha = 0.16; g.fillRect(x0, pTop, x1 - x0, vBot - pTop); g.globalAlpha = 1;
+    }
+
+    const bw = Math.max(1, cw * 0.64);
+    for (let i = a; i < n; i++) {
+      const up = s.c[i] >= s.o[i], cx = X(i);
+      g.strokeStyle = g.fillStyle = col(up ? '--up' : '--down');
+      g.lineWidth = 1;
+      g.beginPath(); g.moveTo(Math.round(cx) + 0.5, Y(s.h[i])); g.lineTo(Math.round(cx) + 0.5, Y(s.l[i])); g.stroke();
+      const yt = Y(Math.max(s.o[i], s.c[i])), yb = Y(Math.min(s.o[i], s.c[i]));
+      g.fillRect(cx - bw / 2, yt, bw, Math.max(1, yb - yt));
+      g.globalAlpha = 0.55;
+      const vh = vmax ? (s.v[i] / vmax) * (volH - 4) : 0;
+      g.fillRect(cx - bw / 2, vBot - vh, bw, vh);
+      g.globalAlpha = 1;
+    }
+
+    [['ma5', '--ma1'], ['ma25', '--ma2'], ['ma75', '--ma3']].forEach(([k, c]) => {
+      g.strokeStyle = col(c); g.lineWidth = 1.3; g.beginPath();
+      let on = false;
+      for (let i = a; i < n; i++) {
+        const v = x[k][i];
+        if (v == null) { on = false; continue; }
+        if (!on) { g.moveTo(X(i), Y(v)); on = true; } else g.lineTo(X(i), Y(v));
+      }
+      g.stroke();
+    });
+
+    if (d) {
+      g.strokeStyle = col('--hi'); g.lineWidth = 1.5; g.setLineDash([5, 4]);
+      (d.lines || []).forEach(L => {
+        g.beginPath();
+        g.moveTo(X(Math.max(L.x1, a)), Y(L.y1 + (L.y2 - L.y1) * ((Math.max(L.x1, a) - L.x1) / (L.x2 - L.x1 || 1))));
+        g.lineTo(X(L.x2), Y(L.y2)); g.stroke();
+      });
+      g.setLineDash([]);
+      g.fillStyle = col('--hi');
+      (d.marks || [d.i]).concat(d.marks ? [] : []).forEach(i => {
+        if (i < a) return;
+        const cx = X(i), cy = Y(s.l[i]) + 6;
+        g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx - 4, cy + 7); g.lineTo(cx + 4, cy + 7); g.closePath(); g.fill();
+      });
+    }
+
+    g.fillStyle = col('--muted'); g.textBaseline = 'alphabetic';
+    for (let k = 0; k < 4; k++) {
+      const i = a + Math.round((k * (m - 1)) / 3), tx = X(i);
+      g.textAlign = k === 0 ? 'left' : k === 3 ? 'right' : 'center';
+      g.fillText(md(s.d[i]), k === 0 ? Math.max(0, tx - cw / 2) : k === 3 ? Math.min(pw, tx + cw / 2) : tx, H - 4);
+    }
+    g.textAlign = 'left'; g.textBaseline = 'middle';
+    g.fillText(fmtVol(vmax), pw + 5, vTop + 6);
+
+    const ci = S.cross == null ? n - 1 : S.cross;
+    if (S.cross != null) {
+      g.strokeStyle = col('--muted'); g.lineWidth = 1; g.setLineDash([3, 3]);
+      g.beginPath(); g.moveTo(Math.round(X(ci)) + 0.5, pTop); g.lineTo(Math.round(X(ci)) + 0.5, vBot); g.stroke();
+      g.setLineDash([]);
+    }
+    readout(ci);
+  }
+
+  /* ---------- 地合い ---------- */
+  // rule: pct=変化率(%)で判定, diff=差(pt)で判定, level=水準で判定。dir: 上昇が株の追い風なら+1、逆風なら-1
+  const MK_ITEMS = [
+    { id: 'n225', g: '指数', name: '日経平均', unit: '円', dp: 2, rule: 'pct', dir: 1, th: 0.5 },
+    { id: 'topix', g: '指数', name: 'TOPIX', unit: 'pt', dp: 2, rule: 'pct', dir: 1, th: 0.5 },
+    { id: 'spx', g: '指数', name: 'S&P500', unit: 'pt', dp: 2, rule: 'pct', dir: 1, th: 0.5 },
+    { id: 'ndx', g: '指数', name: 'NASDAQ総合', unit: 'pt', dp: 2, rule: 'pct', dir: 1, th: 0.5 },
+    { id: 'vix', g: '指数', name: 'VIX(恐怖指数)', unit: '', dp: 2, rule: 'level', lv: [20, 25] },
+    { id: 'boj', g: '金利・金融政策', name: '日銀 政策金利', unit: '%', dp: 2, rule: 'diff', dir: -1, th: 0.001, manual: true },
+    { id: 'fed', g: '金利・金融政策', name: 'FRB 政策金利(上限)', unit: '%', dp: 2, rule: 'diff', dir: -1, th: 0.001 },
+    { id: 'us10y', g: '金利・金融政策', name: '米10年債利回り', unit: '%', dp: 2, rule: 'diff', dir: -1, th: 0.05 },
+    { id: 'jp10y', g: '金利・金融政策', name: '日本10年債利回り', unit: '%', dp: 3, rule: 'diff', dir: -1, th: 0.05 },
+    { id: 'usdjpy', g: '為替・商品', name: 'ドル円', unit: '円', dp: 2, rule: 'pct', dir: 1, th: 0.5 },
+    { id: 'wti', g: '為替・商品', name: 'WTI原油', unit: 'ドル', dp: 2, rule: 'pct', dir: -1, th: 3 },
+    { id: 'uscpi', g: '景気・物価', name: '米CPI(前年比)', unit: '%', dp: 1, rule: 'diff', dir: -1, th: 0.05 },
+    { id: 'tkcpi', g: '景気・物価', name: '東京都区部コアCPI(前年比)', unit: '%', dp: 1, rule: 'diff', dir: -1, th: 0.05, manual: true },
+    { id: 'unemp', g: '景気・物価', name: '米失業率', unit: '%', dp: 1, rule: 'diff', dir: -1, th: 0.05 }
+  ];
+  const MK_RULE_TEXT = {
+    n225: '前回比+0.5%以上で追い風、-0.5%以下で逆風',
+    topix: '同上', spx: '同上', ndx: '同上',
+    vix: '20未満で追い風、20〜25で中立、25以上で逆風(水準で判定)',
+    boj: '引き上げで逆風、引き下げで追い風',
+    fed: '同上',
+    us10y: '+0.05pt以上の上昇で逆風、-0.05pt以下の低下で追い風',
+    jp10y: '同上',
+    usdjpy: '+0.5%以上の円安で追い風、-0.5%以下の円高で逆風(輸出企業から見た関係)',
+    wti: '+3%以上の上昇で逆風、-3%以下の下落で追い風(物価・利上げ圧力)',
+    uscpi: '上昇で逆風、低下で追い風(利上げ観測を通じた関係)',
+    tkcpi: '同上',
+    unemp: '上昇で逆風、低下で追い風(景気の強さ)'
+  };
+  const J_LABEL = { tail: '追い風', neu: '中立', head: '逆風' };
+  const SEED_SRC = '初期値(10/2調べ)';
+  const MK_SEED = {
+    date: '2026-10-02', memo: '', ovr: {},
+    vals: {
+      n225: { v: 68309.46, d: '2026-10-02', src: SEED_SRC, p: 66364.20 },
+      topix: { v: 4091.00, d: '2026-10-02', src: SEED_SRC },
+      spx: { v: 7722.72, d: '2026-10-02', src: SEED_SRC },
+      ndx: { v: 30808, d: '2026-10-02', src: SEED_SRC },
+      boj: { v: 1.25, d: '2026-09', src: SEED_SRC, p: 1.00 },
+      fed: { v: 4.00, d: '2026-09', src: SEED_SRC, p: 3.75 },
+      us10y: { v: 5.28, d: '2026-10-02', src: SEED_SRC },
+      jp10y: { v: 3.11, d: '2026-10-02', src: SEED_SRC },
+      usdjpy: { v: 157.83, d: '2026-10-02', src: SEED_SRC },
+      wti: { v: 89.39, d: '2026-10-02', src: SEED_SRC },
+      uscpi: { v: 3.4, d: '2026-08', src: SEED_SRC, p: 3.4 },
+      tkcpi: { v: 2.7, d: '2026-09', src: SEED_SRC },
+      unemp: { v: 4.2, d: '2026-09', src: SEED_SRC, p: 4.1 }
+    }
+  };
+  const M = { cur: null, hist: [], delArmed: null };
+
+  function mkLoad() {
+    const s = LS.get('keisen.market');
+    if (s && s.cur && s.cur.vals) { M.cur = s.cur; M.hist = Array.isArray(s.hist) ? s.hist : []; }
+    else { M.cur = JSON.parse(JSON.stringify(MK_SEED)); M.hist = []; }
+    if (!M.cur.ovr) M.cur.ovr = {};
+  }
+  function mkSave() { return LS.set('keisen.market', { cur: M.cur, hist: M.hist }); }
+
+  const mkItem = id => MK_ITEMS.find(x => x.id === id);
+  const fmtNum = (v, dp) => Number(v).toLocaleString('ja-JP', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+  const fmtD = d => !d ? '' : d.length === 7 ? Number(d.slice(5, 7)) + '月分' : md(d);
+  function mkRef(id) {
+    const date = M.cur.date;
+    const recs = M.hist.filter(h => h.date < date && h.vals[id] && h.vals[id].v != null).sort((a, b) => (a.date < b.date ? 1 : -1));
+    if (recs.length) return { v: recs[0].vals[id].v, label: '前回記録(' + md(recs[0].date) + ')比' };
+    const c = M.cur.vals[id];
+    if (c && c.p != null) return { v: c.p, label: '前回値比' };
+    return null;
+  }
+  function mkChange(it, v, ref) {
+    if (v == null || !ref) return null;
+    return it.rule === 'pct' ? (v / ref.v - 1) * 100 : v - ref.v;
+  }
+  function mkAutoJudge(it, v, ref) {
+    if (v == null) return null;
+    if (it.rule === 'level') return v >= it.lv[1] ? 'head' : v >= it.lv[0] ? 'neu' : 'tail';
+    const ch = mkChange(it, v, ref);
+    if (ch == null || Math.abs(ch) < it.th) return 'neu';
+    return ch * it.dir > 0 ? 'tail' : 'head';
+  }
+  function mkJudge(it) {
+    const c = M.cur.vals[it.id], v = c ? c.v : null;
+    if (v == null) return null;
+    const o = M.cur.ovr[it.id];
+    if (o) return { j: o, manual: true };
+    return { j: mkAutoJudge(it, v, mkRef(it.id)), manual: false };
+  }
+  function mkChgText(it) {
+    const c = M.cur.vals[it.id];
+    if (!c || c.v == null) return '';
+    if (it.rule === 'level') return '水準で判定';
+    const ref = mkRef(it.id), ch = mkChange(it, c.v, ref);
+    if (ch == null) return '比較する値なし';
+    if (Math.abs(ch) < 1e-9) return ref.label.replace(/比$/, '') + 'と同じ';
+    return ref.label + ' ' + (ch >= 0 ? '+' : '') + (it.rule === 'pct' ? ch.toFixed(2) + '%' : ch.toFixed(2) + 'pt');
+  }
+  function mkCounts() {
+    const n = { tail: 0, neu: 0, head: 0 };
+    for (const it of MK_ITEMS) { const r = mkJudge(it); if (r && r.j) n[r.j]++; }
+    return n;
+  }
+
+  function renderMkSum() {
+    const n = mkCounts(), tot = n.tail + n.neu + n.head || 1;
+    $('#mk-bar').innerHTML = ['tail', 'neu', 'head'].map(k => n[k] ? '<i class="' + k[0] + '" style="width:' + (n[k] / tot * 100) + '%"></i>' : '').join('');
+    $('#mk-cnt').innerHTML = '<span>追い風<b class="up">' + n.tail + '</b></span><span>中立<b>' + n.neu + '</b></span><span>逆風<b class="dn">' + n.head + '</b></span>';
+  }
+  function renderMkRow(it) {
+    const c = M.cur.vals[it.id], r = mkJudge(it);
+    const src = c && c.v != null ? (c.src || '手入力') + (c.d ? '・' + fmtD(c.d) : '') : (it.manual ? '手入力の項目' : '未入力');
+    const val = c && c.v != null ? c.v : '';
+    return '<div class="mk-row" data-id="' + it.id + '">' +
+      '<div class="mk-name"><b>' + esc(it.name) + '</b><span class="mk-src">' + esc(src) + '</span></div>' +
+      '<label class="mk-in"><span class="vh">' + esc(it.name) + 'の値</span><input type="text" inputmode="decimal" autocomplete="off" data-mk="' + it.id + '" value="' + esc(val) + '"><em>' + it.unit + '</em></label>' +
+      '<div class="mk-chg">' + esc(mkChgText(it)) + '</div>' +
+      (r ? '<button type="button" class="pill" data-pill="' + it.id + '" data-j="' + r.j + '" data-o="' + (r.manual ? 1 : 0) + '" aria-label="' + esc(it.name) + 'の判定: ' + J_LABEL[r.j] + (r.manual ? '(手動)' : '') + '。押すと切り替え">' + J_LABEL[r.j] + '</button>' : '<span></span>') +
+      '</div>';
+  }
+  function renderMkList() {
+    const groups = Array.from(new Set(MK_ITEMS.map(x => x.g)));
+    $('#mk-list').innerHTML = groups.map(g => '<div class="mk-grp"><h2 class="lab">' + g + '</h2>' + MK_ITEMS.filter(x => x.g === g).map(renderMkRow).join('') + '</div>').join('');
+  }
+  function updateMkRow(id) {
+    const row = $('.mk-row[data-id="' + id + '"]');
+    const it = mkItem(id);
+    if (!row || !it) return;
+    const r = mkJudge(it), c = M.cur.vals[id];
+    row.querySelector('.mk-src').textContent = c && c.v != null ? (c.src || '手入力') + (c.d ? '・' + fmtD(c.d) : '') : (it.manual ? '手入力の項目' : '未入力');
+    row.querySelector('.mk-chg').textContent = mkChgText(it);
+    const old = row.children[3];
+    const tmp = document.createElement('div');
+    tmp.innerHTML = r ? '<button type="button" class="pill" data-pill="' + id + '" data-j="' + r.j + '" data-o="' + (r.manual ? 1 : 0) + '" aria-label="' + esc(it.name) + 'の判定: ' + J_LABEL[r.j] + (r.manual ? '(手動)' : '') + '。押すと切り替え">' + J_LABEL[r.j] + '</button>' : '<span></span>';
+    row.replaceChild(tmp.firstChild, old);
+  }
+  function renderMkHist() {
+    $('#mk-hcnt').textContent = M.hist.length ? M.hist.length + '件' : '';
+    const hs = M.hist.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+    $('#mk-hist').innerHTML = hs.length ? hs.map(h => {
+      const n = { tail: 0, neu: 0, head: 0 };
+      (h.judge ? Object.values(h.judge) : []).forEach(j => { if (n[j] != null) n[j]++; });
+      const armed = M.delArmed === h.date;
+      return '<li><button type="button" class="hrow" data-load="' + h.date + '"><b>' + h.date + '</b>追い風' + n.tail + '・中立' + n.neu + '・逆風' + n.head + '</button>' +
+        '<button type="button" class="hdel" data-del="' + h.date + '">' + (armed ? 'もう一度で削除' : '削除') + '</button></li>';
+    }).join('') : '<li class="empty" style="display:block;padding:12px 0">まだ記録がありません。「この内容で記録」を押すと、週ごとに残せます。</li>';
+  }
+  function renderMkRules() {
+    $('#mk-rules').innerHTML = MK_ITEMS.map(it => '<li><b>' + esc(it.name) + '</b>: ' + MK_RULE_TEXT[it.id] + '</li>').join('');
+  }
+  function renderMarket() {
+    $('#mk-date').value = M.cur.date || '';
+    $('#mk-memo').value = M.cur.memo || '';
+    renderMkSum(); renderMkList(); renderMkHist(); renderMkRules();
+  }
+  function mkMsg(t, err) { const m = $('#mk-msg'); m.className = 'msg' + (err ? ' err' : ''); m.textContent = t; }
+
+  function mkSetVal(id, raw) {
+    const t = String(raw).replace(/[,，\s]/g, '').replace(/[０-９．－]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+    if (t === '') { delete M.cur.vals[id]; }
+    else {
+      const v = parseFloat(t);
+      if (!isFinite(v)) return false;
+      const prev = M.cur.vals[id];
+      if (prev && prev.v === v) return true;
+      M.cur.vals[id] = { v, d: M.cur.date, src: '手入力', p: prev ? prev.p : undefined };
+    }
+    mkSave();
+    return true;
+  }
+  function mkRecord() {
+    const judge = {};
+    for (const it of MK_ITEMS) { const r = mkJudge(it); if (r) judge[it.id] = r.j; }
+    const vals = {};
+    for (const k in M.cur.vals) { const c = M.cur.vals[k]; if (c && c.v != null) vals[k] = { v: c.v, d: c.d, src: c.src }; }
+    const rec = { date: M.cur.date, vals, ovr: Object.assign({}, M.cur.ovr), memo: M.cur.memo || '', judge };
+    const i = M.hist.findIndex(h => h.date === rec.date);
+    if (i >= 0) M.hist[i] = rec; else M.hist.push(rec);
+    const ok = mkSave();
+    renderMkHist();
+    mkMsg(rec.date + ' の地合いを記録しました。' + (i >= 0 ? '(同じ日付の記録を上書き)' : '') + (ok ? '' : '保存容量が足りません。'), !ok);
+  }
+  function mkLoadRec(date) {
+    const h = M.hist.find(x => x.date === date);
+    if (!h) return;
+    const vals = {};
+    for (const k in h.vals) vals[k] = Object.assign({}, h.vals[k]);
+    M.cur = { date: h.date, vals, ovr: Object.assign({}, h.ovr || {}), memo: h.memo || '' };
+    mkSave(); renderMarket();
+    mkMsg(date + ' の記録を表示しています。');
+  }
+
+  /* 自動取得: 同じ場所の market.json(GitHubで毎日更新)+ ドル円はFrankfurterから直接 */
+  async function getJSON(url, ms) {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const t = ctl ? setTimeout(() => ctl.abort(), ms || 10000) : null;
+    try {
+      const r = await fetch(url, { cache: 'no-store', signal: ctl ? ctl.signal : undefined });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.json();
+    } finally { if (t) clearTimeout(t); }
+  }
+  async function mkFetch() {
+    const btn = $('#mk-fetch');
+    btn.disabled = true;
+    mkMsg('取得中…');
+    const got = {}, fails = [];
+    try {
+      const j = await getJSON('market.json?t=' + Date.now(), 10000);
+      if (j && j.items) for (const k in j.items) {
+        const x = j.items[k];
+        if (mkItem(k) && x && isFinite(x.v)) got[k] = { v: Number(x.v), d: x.d || '', src: '自動', p: isFinite(x.p) ? Number(x.p) : undefined };
+      }
+    } catch (e) { fails.push('market.json'); }
+    try {
+      let j = null;
+      try { j = await getJSON('https://api.frankfurter.dev/v1/latest?base=USD&symbols=JPY', 8000); }
+      catch (e) { j = await getJSON('https://api.frankfurter.app/latest?from=USD&to=JPY', 8000); }
+      if (j && j.rates && isFinite(j.rates.JPY)) {
+        const old = got.usdjpy;
+        if (!old || (j.date || '') >= (old.d || '')) got.usdjpy = { v: Math.round(j.rates.JPY * 100) / 100, d: j.date || '', src: '自動', p: old ? old.p : undefined };
+      }
+    } catch (e) { fails.push('ドル円'); }
+    const ids = Object.keys(got);
+    let latest = '';
+    for (const k of ids) {
+      const prev = M.cur.vals[k];
+      if (got[k].p == null && prev && prev.v != null && prev.d && prev.d < got[k].d) got[k].p = prev.v;
+      M.cur.vals[k] = got[k];
+      if (got[k].d.length === 10 && got[k].d > latest && ['n225', 'topix', 'spx', 'ndx'].indexOf(k) >= 0) latest = got[k].d;
+    }
+    if (latest && latest > (M.cur.date || '')) M.cur.date = latest;
+    mkSave(); renderMarket();
+    btn.disabled = false;
+    const miss = MK_ITEMS.filter(it => !got[it.id]).map(it => it.name);
+    if (!ids.length) mkMsg('自動取得できませんでした(' + fails.join('・') + ')。通信環境か、market.json の設置を確認してください。手入力はそのまま使えます。', true);
+    else mkMsg(ids.length + '項目を更新しました。' + (miss.length ? '手入力が必要: ' + miss.join('、') : ''));
+  }
+
+  function mkExport() {
+    const d = M.cur.date || '';
+    const ymd = d ? Number(d.slice(0, 4)) + '年' + Number(d.slice(5, 7)) + '月' + Number(d.slice(8, 10)) + '日' : '';
+    const n = mkCounts();
+    const L = [];
+    L.push('【今週の地合い】' + (ymd ? ymd + '時点' : ''));
+    L.push('');
+    L.push('追い風 ' + n.tail + '/中立 ' + n.neu + '/逆風 ' + n.head);
+    const groups = Array.from(new Set(MK_ITEMS.map(x => x.g)));
+    for (const g of groups) {
+      const rows = MK_ITEMS.filter(x => x.g === g && M.cur.vals[x.id] && M.cur.vals[x.id].v != null);
+      if (!rows.length) continue;
+      L.push('');
+      L.push('【' + g + '】');
+      for (const it of rows) {
+        const c = M.cur.vals[it.id], r = mkJudge(it);
+        const ref = mkRef(it.id), ch = it.rule === 'level' ? null : mkChange(it, c.v, ref);
+        const chs = ch == null ? '' : Math.abs(ch) < 1e-9 ? '(前回と同じ)' : '(' + (ch >= 0 ? '+' : '') + (it.rule === 'pct' ? ch.toFixed(1) + '%' : ch.toFixed(2) + 'pt') + ')';
+        const unit = it.unit === 'pt' ? '' : it.unit;
+        L.push('・' + it.name + ': ' + fmtNum(c.v, it.dp) + unit + chs + (r ? ' → ' + J_LABEL[r.j] : ''));
+      }
+    }
+    if ((M.cur.memo || '').trim()) { L.push(''); L.push('【ひとこと】'); L.push(M.cur.memo.trim()); }
+    L.push('');
+    L.push('※追い風・逆風は、各指標と株式市場の一般的な関係にもとづく分類です。カッコ内は前回の記録からの変化です。');
+    L.push('※本記事は情報の整理を目的とした教育用の内容であり、特定の銘柄や売買を推奨するものではありません。投資判断はご自身の責任でお願いします。');
+    const out = $('#mk-out');
+    out.value = L.join('\n');
+    out.hidden = false;
+    $('#mk-copy').hidden = false;
+    $('#mk-copy').textContent = 'コピー';
+  }
+  async function mkCopy() {
+    const out = $('#mk-out'), b = $('#mk-copy');
+    try { await navigator.clipboard.writeText(out.value); b.textContent = 'コピーしました'; }
+    catch (e) {
+      out.focus(); out.select();
+      try { document.execCommand('copy'); b.textContent = 'コピーしました'; } catch (e2) { b.textContent = '長押しでコピーしてください'; }
+    }
+  }
+
+  function bindMarket() {
+    $('#mk-list').addEventListener('change', e => {
+      const id = e.target.dataset && e.target.dataset.mk;
+      if (!id) return;
+      if (!mkSetVal(id, e.target.value)) { mkMsg(mkItem(id).name + ': 数字を入力してください。', true); return; }
+      const c = M.cur.vals[id];
+      e.target.value = c ? c.v : '';
+      updateMkRow(id); renderMkSum();
+    });
+    $('#mk-list').addEventListener('click', e => {
+      const b = e.target.closest('[data-pill]');
+      if (!b) return;
+      const id = b.dataset.pill, cur = M.cur.ovr[id] || 'auto';
+      // 自動判定と同じ値は飛ばし、押すたびに見た目が変わるようにする(他の2つ → 自動に戻る)
+      const auto = mkAutoJudge(mkItem(id), M.cur.vals[id].v, mkRef(id));
+      const seq = ['tail', 'neu', 'head'].filter(k => k !== auto).concat('auto');
+      const nx = seq[(seq.indexOf(cur) + 1) % seq.length];
+      if (nx === 'auto') delete M.cur.ovr[id]; else M.cur.ovr[id] = nx;
+      mkSave(); updateMkRow(id); renderMkSum();
+      const nb = $('[data-pill="' + id + '"]');
+      if (nb) nb.focus();
+    });
+    $('#mk-date').addEventListener('change', e => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) return;
+      M.cur.date = e.target.value; mkSave(); renderMkSum(); renderMkList();
+    });
+    $('#mk-memo').addEventListener('input', e => { M.cur.memo = e.target.value; mkSave(); });
+    $('#mk-save').addEventListener('click', mkRecord);
+    $('#mk-fetch').addEventListener('click', mkFetch);
+    $('#mk-export').addEventListener('click', mkExport);
+    $('#mk-copy').addEventListener('click', mkCopy);
+    $('#mk-hist').addEventListener('click', e => {
+      const l = e.target.closest('[data-load]'), d = e.target.closest('[data-del]');
+      if (l) { mkLoadRec(l.dataset.load); return; }
+      if (d) {
+        const date = d.dataset.del;
+        if (M.delArmed !== date) {
+          M.delArmed = date; renderMkHist();
+          setTimeout(() => { if (M.delArmed === date) { M.delArmed = null; renderMkHist(); } }, 4000);
+          return;
+        }
+        M.delArmed = null;
+        M.hist = M.hist.filter(h => h.date !== date);
+        mkSave(); renderMkHist(); renderMkSum(); renderMkList();
+        mkMsg(date + ' の記録を削除しました。');
+      }
+    });
+  }
+
+  /* ---------- イベント ---------- */
+  function bind() {
+    $('#chips').addEventListener('click', e => {
+      const b = e.target.closest('.chip');
+      if (!b) return;
+      const id = b.dataset.id;
+      if (S.sel.has(id)) S.sel.delete(id); else S.sel.add(id);
+      b.setAttribute('aria-pressed', String(S.sel.has(id)));
+      savePrefs(); refresh();
+    });
+    $$('[data-mode]').forEach(b => b.addEventListener('click', () => {
+      S.mode = b.dataset.mode;
+      $$('[data-mode]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      savePrefs(); refresh();
+    }));
+    $('#sort').addEventListener('change', e => { S.sort = e.target.value; savePrefs(); refresh(); });
+    $('#q').addEventListener('input', e => { S.q = e.target.value; refresh(); });
+    $('#params').addEventListener('change', e => {
+      const p = PARAMS.find(x => 'p-' + x.k === e.target.id);
+      if (!p) return;
+      let v = parseFloat(e.target.value);
+      if (!isFinite(v)) v = KS.DEF_P[p.k];
+      v = Math.min(p.max, Math.max(p.min, v));
+      S.P[p.k] = v; e.target.value = v;
+      savePrefs(); recompute(); renderResults(); renderDefs();
+    });
+    $('#p-reset').addEventListener('click', () => {
+      S.P = Object.assign({}, KS.DEF_P);
+      renderParams(); savePrefs(); recompute(); renderResults(); renderDefs();
+    });
+    $('#list').addEventListener('click', e => {
+      const b = e.target.closest('.row');
+      if (b) openDetail(b.dataset.code);
+    });
+    $$('.tabbar button').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+    $('#file').addEventListener('change', e => { if (e.target.files.length) importFiles(Array.from(e.target.files)); });
+    $('#ds-reset').addEventListener('click', () => {
+      if (!S.resetArmed) {
+        S.resetArmed = true; renderData();
+        setTimeout(() => { S.resetArmed = false; renderData(); }, 4000);
+        return;
+      }
+      S.resetArmed = false;
+      LS.del('keisen.data');
+      loadData(); recompute(); renderAll();
+      $('#imp-msg').className = 'msg';
+      $('#imp-msg').textContent = 'サンプルに戻しました。';
+    });
+    $('#d-back').addEventListener('click', closeDetail);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.detail) closeDetail(); });
+    $('#d-range').addEventListener('click', e => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      S.range = Number(b.dataset.range); S.cross = null;
+      $$('#d-range button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      drawChart();
+    });
+    $('#d-hits').addEventListener('click', e => {
+      const b = e.target.closest('.hitbtn');
+      if (!b) return;
+      S.focus = b.dataset.focus;
+      renderDetail();
+    });
+    const cv = $('#d-canvas');
+    const move = e => {
+      if (!S.detail) return;
+      const r = cv.getBoundingClientRect(), n = S.detail.c.length, m = Math.min(S.range, n), a = n - m, pw = r.width - 48;
+      const f = Math.min(0.999, Math.max(0, (e.clientX - r.left) / pw));
+      S.cross = a + Math.floor(f * m);
+      drawChart();
+    };
+    cv.addEventListener('pointerdown', move);
+    cv.addEventListener('pointermove', e => { if (e.buttons || e.pointerType === 'touch') move(e); });
+    window.addEventListener('resize', () => { if (S.detail) drawChart(); });
+    const redraw = () => { if (S.detail) drawChart(); };
+    if (window.matchMedia) {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      if (mq.addEventListener) mq.addEventListener('change', redraw);
+    }
+    new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+
+  loadPrefs();
+  loadData();
+  recompute();
+  renderChips();
+  renderParams();
+  bind();
+  renderAll();
+  mkLoad();
+  bindMarket();
+  renderMarket();
+})();
+
+if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); }); }
+</script>
+</body>
+</html>

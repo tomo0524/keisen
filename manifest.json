@@ -1,0 +1,25 @@
+{
+  "name": "罫線スクリーナー",
+  "short_name": "罫線",
+  "description": "チャートの形で銘柄を絞り込むスマホ向けスクリーナー",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0E1217",
+  "theme_color": "#0E1217",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -13,7 +13,10 @@ GitHub Actions で手動実行する想定。結果は backtest/ フォルダに
   4. 25日線または40日線が上向き(25営業日前 < 当日)
   5. 75日線 > 終値 > 25日線
   6. 直近63営業日(約3か月)に、出来高 >= 前日までの5日平均出来高×2 の日がある
-シグナル: 条件が初めて揃った日(直前20営業日に同じシグナルがない)。翌日の始値で買う想定。
+シグナル: 条件が初めて揃った日(直前20営業日に同じシグナルがない)。
+買い方: 翌日の始値では買わない。シグナル日の終値の3%下に指値を出し、10営業日以内に安値が届いたら約定
+       (寄り付きが指値より下なら始値で約定)。売りは約定日の前日から数えて H 営業日目の終値。
+比較: D = Aの後20営業日以内に、出来高2倍以上で終値が75日線を上抜けた日をシグナルとする。
 """
 import datetime as dt
 import io
@@ -33,6 +36,7 @@ CFG = {
     "slope_lag": 25, "cooldown": 20,
     "horizons": [5, 10, 20, 40, 60], "years": 5, "split_years_first": 3,
     "cost_roundtrip": 0.003,
+    "limit_drop": 0.03, "limit_wait": 10,
 }
 JPX_URLS = [
     "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xlsx",
@@ -116,24 +120,45 @@ def stats(x):
 
 
 VARIANTS = {
-    "A": "元の条件(条件が揃った翌日の始値で買う)",
-    "B": "Aの後20営業日以内に、終値が75日線を上抜けた翌日の始値で買う",
-    "C": "Aのうち、75日線までの距離が3%以内のものだけ",
+    "A": "元の条件。条件が揃った日の終値の3%下に指値、10営業日以内に約定したら買う",
+    "D": "Aの後20営業日以内に、出来高2倍以上(前日までの5日平均比)で終値が75日線を上抜けた日。その日の終値の3%下に指値、10営業日以内に約定したら買う",
 }
 
 
-def variant_events(cond, c, ma75, cfg):
+def limit_entries(sig, o, l, c, cfg):
+    """シグナル日iの終値×(1-limit_drop)に指値。i+1〜i+limit_wait日に安値が届いたら約定。
+    寄り付きが指値より下なら始値で約定。戻り値: 買い [(約定日の前日, 買値, シグナル日)] と、約定率の材料 [(シグナル日, 約定したか)]"""
+    n = len(c)
+    buys, tries = [], []
+    for i in sig:
+        if i + cfg["limit_wait"] >= n:
+            continue  # 待ち期間を最後まで観測できないものは除く
+        lim = c[i] * (1 - cfg["limit_drop"])
+        filled = False
+        for f in range(i + 1, i + 1 + cfg["limit_wait"]):
+            if l[f] <= lim:
+                buys.append((f - 1, min(o[f], lim), i))
+                filled = True
+                break
+        tries.append((i, filled))
+    return buys, tries
+
+
+def variant_events(cond, o, l, c, ma75, spike, cfg):
+    n = len(c)
     A = events(cond, cfg["cooldown"])
-    B, last = [], -10 ** 9
+    D, last = [], -10 ** 9
     for i in A:
-        for k in range(i + 1, min(len(c), i + 21)):
+        for k in range(i + 1, min(n, i + 21)):
             if c[k] > ma75[k] and c[k - 1] <= ma75[k - 1]:
-                if k - last > cfg["cooldown"]:
-                    B.append(k)
+                if spike[k] and k - last > cfg["cooldown"]:
+                    D.append(k)
                     last = k
                 break
-    C = [i for i in A if ma75[i] / c[i] - 1 <= 0.03]
-    return {"A": A, "B": B, "C": C}
+    out, tries = {}, {}
+    for name, sig in (("A", A), ("D", D)):
+        out[name], tries[name] = limit_entries(sig, o, l, c, cfg)
+    return out, tries
 
 
 def run(frames, names, today=None, cfg=CFG):
@@ -144,6 +169,7 @@ def run(frames, names, today=None, cfg=CFG):
     split = eval_start + pd.DateOffset(years=cfg["split_years_first"])
     base_parts = {h: [] for h in H}
     sigs, current = [], []
+    fills = {v: {"tried": 0, "filled": 0} for v in VARIANTS}
     dropped = {"jump_windows": 0, "stocks_with_jump": 0}
 
     for code, df in frames.items():
@@ -179,15 +205,23 @@ def run(frames, names, today=None, cfg=CFG):
             ok = liquid & np.isfinite(r) & okj & (d >= eval_start)
             if ok.any():
                 base_parts[hz].append(pd.Series(r[ok], index=d[ok]))
-        for var, idxs in variant_events(cond, c, ind["ma75"], cfg).items():
-            for i in idxs:
-                if d[i] < eval_start or i + 1 >= n or not o[i + 1] > 0:
+        vev, vtry = variant_events(cond, o, l, c, ind["ma75"], ind["spike"], cfg)
+        for var, tr in vtry.items():
+            for si, filled in tr:
+                if d[si] >= eval_start:
+                    fills[var]["tried"] += 1
+                    fills[var]["filled"] += int(filled)
+        for var, items in vev.items():
+            for i, e, si in items:
+                if d[si] < eval_start:  # シグナル日で期間を判定(約定率の数え方とそろえる)
                     continue
-                e = o[i + 1]
-                j1, j2 = i + 1, min(n, i + 21)
+                j1, j2 = i + 2, min(n, i + 21)  # 最大上昇・下落は約定の翌日から
+                if j1 >= j2:
+                    continue
                 rec = {"variant": var, "code": code, "name": names.get(code, ""), "date": d[i].strftime("%Y-%m-%d"),
-                       "entry": float(e), "close": float(c[i]),
-                       "ma75_gap": float(c[i] / ind["ma75"][i] - 1),
+                       "signal_date": d[si].strftime("%Y-%m-%d"), "fill_date": d[i + 1].strftime("%Y-%m-%d"),
+                       "entry": float(e), "signal_close": float(c[si]),
+                       "ma75_gap": float(c[si] / ind["ma75"][si] - 1),
                        "mfe20": float(h[j1:j2].max() / e - 1), "mae20": float(l[j1:j2].min() / e - 1),
                        "cross75_20": bool(np.any(c[j1:j2] > ind["ma75"][j1:j2]))}
                 for hz in H:
@@ -254,6 +288,7 @@ def run(frames, names, today=None, cfg=CFG):
         "config": cfg, "period": [eval_start.strftime("%Y-%m-%d"), last_date.strftime("%Y-%m-%d")],
         "split": split.strftime("%Y-%m-%d"), "stocks_tested": len(frames), "cleaning": dropped,
         "signals": res_var["A"]["signals"], "variants": res_var,
+        "limit_fill": {v: dict(x, rate=(x["filled"] / x["tried"]) if x["tried"] else None) for v, x in fills.items()},
         "baseline": {"all": base_block(eval_start, far), "first": base_block(eval_start, split), "second": base_block(split, far)},
         "current": sorted(current, key=lambda x: x["to_ma75"]),
     }
@@ -315,7 +350,6 @@ def download(codes, start, batch_limit=180, total_limit=90 * 60):
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FTimeout
     frames, failed, skipped = {}, [], 0
     B, t0 = 80, time.time()
-    pool = ThreadPoolExecutor(max_workers=4)
     for i in range(0, len(codes), B):
         batch = [c + ".T" for c in codes[i:i + B]]
         if time.time() - t0 > total_limit:
@@ -324,6 +358,8 @@ def download(codes, start, batch_limit=180, total_limit=90 * 60):
             continue
         data = None
         for attempt in range(2):
+            # 毎回新しい作業枠を使う(固まった取得が残っても、次の取得を妨げない)
+            pool = ThreadPoolExecutor(max_workers=1)
             fut = pool.submit(_fetch_batch, batch, start)
             try:
                 data = fut.result(timeout=batch_limit)
@@ -335,9 +371,17 @@ def download(codes, start, batch_limit=180, total_limit=90 * 60):
             except Exception as e:
                 print("retry", i, e, flush=True)
                 time.sleep(15)
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
         for t in batch:
             try:
-                sub = data[t] if data is not None and len(batch) > 1 else data
+                if data is None:
+                    raise KeyError(t)
+                # 列が「銘柄→項目」の2段構造なら銘柄で取り出す(1銘柄だけの回も同じ)
+                if isinstance(data.columns, pd.MultiIndex):
+                    sub = data[t] if t in data.columns.get_level_values(0) else data.droplevel(1, axis=1)
+                else:
+                    sub = data
                 sub = sub[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Open", "High", "Low", "Close"])
                 sub = sub[sub["Close"] > 0]
                 if len(sub) >= 260:
@@ -348,7 +392,7 @@ def download(codes, start, batch_limit=180, total_limit=90 * 60):
                 failed.append(t[:-2])
         print(f"{min(i + B, len(codes))}/{len(codes)} 取得済み {len(frames)} ({int(time.time() - t0)}秒)", flush=True)
         time.sleep(2)
-    pool.shutdown(wait=False, cancel_futures=True)
+    print(f"取得完了: {len(frames)}銘柄 / 失敗 {len(failed)} / 時間切れで飛ばした回数 {skipped}", flush=True)
     return frames, failed
 
 

@@ -6,7 +6,7 @@ GitHub Actions で手動実行する想定。結果は backtest/ フォルダに
   - 株価: Yahoo Finance(yfinance)。個人の検証目的で利用すること
 
 条件(すべて当日の終値時点で判定)
-  流動性: 売買代金(終値×出来高)の5日平均が 1億円以上 30億円未満
+  流動性: 売買代金(終値×出来高)の5日平均が 5,000万円以上 10億円以下
   1. 終値 < 200日線
   2. 75日線が下向き(25営業日前の75日線 > 当日の75日線)
   3. 直近60営業日(当日を除く)に、日中の値幅が75日線にかかった日がある
@@ -16,6 +16,11 @@ GitHub Actions で手動実行する想定。結果は backtest/ フォルダに
 シグナル: 条件が初めて揃った日(直前20営業日に同じシグナルがない)。
 買い方: 翌日の始値では買わない。シグナル日の終値の3%下に指値を出し、10営業日以内に安値が届いたら約定
        (寄り付きが指値より下なら始値で約定)。売りは約定日の前日から数えて H 営業日目の終値。
+損切り: 約定日以降、終値が25日線×0.97を下回った日が出たら翌日の始値で売る。
+利確: 約定の翌日以降、高値が買値×(1+利確幅)に届いたらその価格で売る(寄りが上なら始値)。
+      利確幅は なし/5%/10%/15%/20% を比較。同じ日に両方なら利確を優先。
+最長保有: どちらにもかからなければ、約定日から数えて H 営業日目(約定日=1日目)の終値で売る。
+比較対象: 流動性条件を満たす全銘柄・全日に、まったく同じ売買ルール(指値→損切り→利確)を当てはめたもの。
 比較: D = Aの後20営業日以内に、出来高2倍以上で終値が75日線を上抜けた日をシグナルとする。
 """
 import datetime as dt
@@ -31,12 +36,13 @@ import numpy as np
 import pandas as pd
 
 CFG = {
-    "turnover_min": 1e8, "turnover_max": 3e9, "turnover_days": 5,
+    "turnover_min": 5e7, "turnover_max": 1e9, "turnover_days": 5,
     "touch_lookback": 60, "spike_lookback": 63, "spike_mult": 2.0, "spike_avg_days": 5,
     "slope_lag": 25, "cooldown": 20,
     "horizons": [5, 10, 20, 40, 60], "years": 5, "split_years_first": 3,
     "cost_roundtrip": 0.003,
-    "limit_drop": 0.03, "limit_wait": 10,
+    "limit_drop": 0.03, "limit_wait": 10, "stop_below_ma25": 0.03,
+    "take_profits": [None, 0.05, 0.10, 0.15, 0.20],
 }
 JPX_URLS = [
     "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xlsx",
@@ -75,7 +81,7 @@ def condition(o, h, l, c, v, cfg=CFG):
         touch_recent = shift(roll_any(touch, cfg["touch_lookback"]).astype(float), 1) > 0
         spike_recent = roll_any(spike, cfg["spike_lookback"])
         cond = (
-            (turn >= cfg["turnover_min"]) & (turn < cfg["turnover_max"])
+            (turn >= cfg["turnover_min"]) & (turn <= cfg["turnover_max"])
             & (c < ma200)
             & (ma75 < shift(ma75, lag))
             & touch_recent
@@ -125,26 +131,8 @@ VARIANTS = {
 }
 
 
-def limit_entries(sig, o, l, c, cfg):
-    """シグナル日iの終値×(1-limit_drop)に指値。i+1〜i+limit_wait日に安値が届いたら約定。
-    寄り付きが指値より下なら始値で約定。戻り値: 買い [(約定日の前日, 買値, シグナル日)] と、約定率の材料 [(シグナル日, 約定したか)]"""
-    n = len(c)
-    buys, tries = [], []
-    for i in sig:
-        if i + cfg["limit_wait"] >= n:
-            continue  # 待ち期間を最後まで観測できないものは除く
-        lim = c[i] * (1 - cfg["limit_drop"])
-        filled = False
-        for f in range(i + 1, i + 1 + cfg["limit_wait"]):
-            if l[f] <= lim:
-                buys.append((f - 1, min(o[f], lim), i))
-                filled = True
-                break
-        tries.append((i, filled))
-    return buys, tries
-
-
-def variant_events(cond, o, l, c, ma75, spike, cfg):
+def variant_signals(cond, c, ma75, spike, cfg):
+    """A: 条件が初めて揃った日。D: Aの後20営業日以内に、出来高2倍で終値が75日線を上抜けた日。"""
     n = len(c)
     A = events(cond, cfg["cooldown"])
     D, last = [], -10 ** 9
@@ -155,19 +143,72 @@ def variant_events(cond, o, l, c, ma75, spike, cfg):
                     D.append(k)
                     last = k
                 break
-    out, tries = {}, {}
-    for name, sig in (("A", A), ("D", D)):
-        out[name], tries[name] = limit_entries(sig, o, l, c, cfg)
-    return out, tries
+    return {"A": A, "D": D}
+
+
+TP_KEY = lambda tp: "none" if tp is None else f"{int(round(tp * 100))}"
+
+
+def simulate(o, h, l, c, stopf, cfg):
+    """各日iを「シグナル日」とみなして売買をまとめて計算する(シグナル側も比較対象も同じこの計算を使う)。
+    買い: i+1〜i+limit_wait日目に安値が c[i]×(1-limit_drop) 以下になった最初の日fに、min(始値, 指値)で約定。
+    売り(保有期間H・利確幅tp): 約定日fを1日目として、
+      - 利確: f+1日目以降、高値 >= 買値×(1+tp) の日に max(始値, 目標) で売る
+      - 損切り: f日目以降、終値 < 25日線×(1-stop) の日の翌日の始値で売る(翌日が最終日以前の場合)
+      - どちらもなし: f+H-1日目の終値で売る
+    戻り値: f(約定日, 未約定は-1), entry, tried(待ち期間を最後まで観測できたか), res[(H, tpkey)] = (騰落率, 保有日数, 決済の種類)"""
+    n = len(c)
+    I = np.arange(n)
+    lim = c * (1 - cfg["limit_drop"])
+    f = np.full(n, -1)
+    entry = np.full(n, np.nan)
+    for w in range(1, cfg["limit_wait"] + 1):
+        k = I + w
+        kk = np.minimum(k, n - 1)
+        hit = (k < n) & (f < 0) & (l[kk] <= lim)
+        f[hit] = k[hit]
+        entry[hit] = np.minimum(o[kk[hit]], lim[hit])
+    tried = I + cfg["limit_wait"] < n
+    res = {}
+    for hz in cfg["horizons"]:
+        end = f + hz - 1
+        valid = (f >= 0) & (end < n)
+        for tp in cfg["take_profits"]:
+            alive = valid.copy()
+            px = np.full(n, np.nan)
+            days = np.zeros(n, dtype=int)
+            kind = np.zeros(n, dtype=int)  # 0=期間満了 1=損切り 2=利確
+            tgt = entry * (1 + tp) if tp is not None else None
+            for t in range(hz):
+                kk = np.clip(f + t, 0, n - 1)
+                if tp is not None and t >= 1:
+                    m = alive & (h[kk] >= tgt)
+                    px[m] = np.maximum(o[kk[m]], tgt[m])
+                    days[m], kind[m] = t + 1, 2
+                    alive &= ~m
+                if t <= hz - 2:
+                    m = alive & stopf[kk]
+                    px[m] = o[np.minimum(kk[m] + 1, n - 1)]
+                    days[m], kind[m] = t + 2, 1
+                    alive &= ~m
+            px[alive] = c[np.clip(end, 0, n - 1)[alive]]
+            days[alive] = hz
+            with np.errstate(invalid="ignore", divide="ignore"):
+                r = px / entry - 1
+            r[~valid] = np.nan
+            res[(hz, TP_KEY(tp))] = (r, days, kind)
+    return f, entry, tried, res
 
 
 def run(frames, names, today=None, cfg=CFG):
     """frames: {code: DataFrame(Open,High,Low,Close,Volume, index=日付)}"""
     H = cfg["horizons"]
+    TPK = [TP_KEY(tp) for tp in cfg["take_profits"]]
     last_date = max(df.index[-1] for df in frames.values())
     eval_start = last_date - pd.DateOffset(years=cfg["years"])
     split = eval_start + pd.DateOffset(years=cfg["split_years_first"])
-    base_parts = {h: [] for h in H}
+    base = {(hz, tk): [] for hz in H for tk in TPK}
+    base_fill = {"tried": 0, "filled": 0}
     sigs, current = [], []
     fills = {v: {"tried": 0, "filled": 0} for v in VARIANTS}
     dropped = {"jump_windows": 0, "stocks_with_jump": 0}
@@ -189,43 +230,59 @@ def run(frames, names, today=None, cfg=CFG):
             dropped["stocks_with_jump"] += 1
         jc = np.cumsum(jump)
         cond, ind = condition(o, h, l, c, v, cfg)
+        with np.errstate(invalid="ignore"):
+            stopf = c < ind["ma25"] * (1 - cfg["stop_below_ma25"])
+        f, entry, tried, sim = simulate(o, h, l, c, stopf, cfg)
+        in_period = np.asarray(d >= eval_start)
 
-        def clean(i, hz):  # i+1 .. i+hz の間に異常値がない
-            return i + hz < n and jc[i + hz] - jc[i] == 0
+        def clean(i, hz):  # シグナル日i〜最終日に異常値がない
+            if f[i] < 0:
+                return False
+            end = f[i] + hz - 1
+            return end < n and jc[end] - jc[i] == 0
 
-        liquid = (ind["turn"] >= cfg["turnover_min"]) & (ind["turn"] < cfg["turnover_max"])
-        o_next = np.append(o[1:], np.nan)
+        # 比較対象: 流動性条件(同じ売買代金の範囲)を満たす全日に、同じ売買ルールを当てはめる
+        liquid = (ind["turn"] >= cfg["turnover_min"]) & (ind["turn"] <= cfg["turnover_max"])
+        bt_ = liquid & tried & in_period
+        base_fill["tried"] += int(bt_.sum())
+        base_fill["filled"] += int((bt_ & (f >= 0)).sum())
+        I = np.arange(n)
         for hz in H:
-            exitc = np.append(c[hz:], [np.nan] * hz)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                r = exitc / o_next - 1
-            jc_end = np.append(jc[hz:], [jc[-1]] * hz)
-            okj = (jc_end - jc) == 0
-            dropped["jump_windows"] += int((liquid & ~okj).sum())
-            ok = liquid & np.isfinite(r) & okj & (d >= eval_start)
-            if ok.any():
-                base_parts[hz].append(pd.Series(r[ok], index=d[ok]))
-        vev, vtry = variant_events(cond, o, l, c, ind["ma75"], ind["spike"], cfg)
-        for var, tr in vtry.items():
-            for si, filled in tr:
-                if d[si] >= eval_start:
-                    fills[var]["tried"] += 1
-                    fills[var]["filled"] += int(filled)
-        for var, items in vev.items():
-            for i, e, si in items:
-                if d[si] < eval_start:  # シグナル日で期間を判定(約定率の数え方とそろえる)
+            end = np.clip(f + hz - 1, 0, n - 1)
+            okj = (f >= 0) & (f + hz - 1 < n) & ((jc[end] - jc) == 0)
+            dropped["jump_windows"] += int((liquid & (f >= 0) & (f + hz - 1 < n) & ~okj).sum())
+            for tk in TPK:
+                r = sim[(hz, tk)][0]
+                ok = liquid & in_period & okj & np.isfinite(r)
+                if ok.any():
+                    base[(hz, tk)].append(pd.Series(r[ok], index=d[ok]))
+
+        vev = variant_signals(cond, c, ind["ma75"], ind["spike"], cfg)
+        for var, sig in vev.items():
+            for i in sig:
+                if not in_period[i]:
                     continue
-                j1, j2 = i + 2, min(n, i + 21)  # 最大上昇・下落は約定の翌日から
+                if tried[i]:
+                    fills[var]["tried"] += 1
+                    fills[var]["filled"] += int(f[i] >= 0)
+                if f[i] < 0:
+                    continue
+                fi, e = int(f[i]), float(entry[i])
+                j1, j2 = fi + 1, min(n, fi + 21)  # 最大上昇・下落は約定の翌日から20日
                 if j1 >= j2:
                     continue
                 rec = {"variant": var, "code": code, "name": names.get(code, ""), "date": d[i].strftime("%Y-%m-%d"),
-                       "signal_date": d[si].strftime("%Y-%m-%d"), "fill_date": d[i + 1].strftime("%Y-%m-%d"),
-                       "entry": float(e), "signal_close": float(c[si]),
-                       "ma75_gap": float(c[si] / ind["ma75"][si] - 1),
-                       "mfe20": float(h[j1:j2].max() / e - 1), "mae20": float(l[j1:j2].min() / e - 1),
-                       "cross75_20": bool(np.any(c[j1:j2] > ind["ma75"][j1:j2]))}
+                       "fill_date": d[fi].strftime("%Y-%m-%d"), "entry": e, "signal_close": float(c[i]),
+                       "ma75_gap": float(c[i] / ind["ma75"][i] - 1),
+                       "mfe20": float(h[j1:j2].max() / e - 1), "mae20": float(l[j1:j2].min() / e - 1)}
                 for hz in H:
-                    rec[f"r{hz}"] = float(c[i + hz] / e - 1) if clean(i, hz) else None
+                    cl = clean(i, hz)
+                    for tk in TPK:
+                        r, days, kind = sim[(hz, tk)]
+                        ok = cl and np.isfinite(r[i])
+                        rec[f"r{hz}_{tk}"] = float(r[i]) if ok else None
+                        rec[f"days{hz}_{tk}"] = int(days[i]) if ok else None
+                        rec[f"kind{hz}_{tk}"] = int(kind[i]) if ok else None
                 sigs.append(rec)
         if cond[-1] and d[-1] == last_date:
             k = n - 1
@@ -233,40 +290,50 @@ def run(frames, names, today=None, cfg=CFG):
                 k -= 1
             sp = np.where(ind["spike"][max(0, n - cfg["spike_lookback"]):])[0]
             current.append({"code": code, "name": names.get(code, ""), "close": float(c[-1]),
+                            "limit_price": round(float(c[-1]) * (1 - cfg["limit_drop"]), 1),
                             "ma25": round(float(ind["ma25"][-1]), 1), "ma75": round(float(ind["ma75"][-1]), 1),
                             "ma200": round(float(ind["ma200"][-1]), 1), "to_ma75": round(float(ind["ma75"][-1] / c[-1] - 1), 4),
-                            "turnover5_oku": round(float(ind["turn"][-1]) / 1e8, 1), "since": d[k].strftime("%Y-%m-%d"),
+                            "stop_line": round(float(ind["ma25"][-1]) * (1 - cfg["stop_below_ma25"]), 1),
+                            "turnover5_oku": round(float(ind["turn"][-1]) / 1e8, 2), "since": d[k].strftime("%Y-%m-%d"),
                             "last_spike_days_ago": int(len(ind["spike"][max(0, n - cfg["spike_lookback"]):]) - 1 - sp[-1]) if len(sp) else None})
 
-    # 比較対象: 同じ日に流動性条件を満たした全銘柄の「中央値」と「平均」
-    base_all = {hz: (pd.concat(base_parts[hz]) if base_parts[hz] else pd.Series(dtype=float)) for hz in H}
-    base_med = {hz: base_all[hz].groupby(level=0).median() for hz in H}
-    base_mean = {hz: base_all[hz].groupby(level=0).mean() for hz in H}
+    # 比較対象を日付ごとに集計し、シグナルとの差を計算
+    bmean, bmed, ball = {}, {}, {}
+    for key, parts in base.items():
+        sr = pd.concat(parts) if parts else pd.Series(dtype=float)
+        g = sr.groupby(level=0)
+        bmean[key], bmed[key], ball[key] = g.mean(), g.median(), sr
     for s in sigs:
         dd = pd.Timestamp(s["date"])
         for hz in H:
-            r = s[f"r{hz}"]
-            bm, bmn = base_med[hz].get(dd, np.nan), base_mean[hz].get(dd, np.nan)
-            s[f"x{hz}"] = (r - bm) if r is not None and not math.isnan(bm) else None
-            s[f"xm{hz}"] = (r - bmn) if r is not None and not math.isnan(bmn) else None
+            for tk in TPK:
+                r = s[f"r{hz}_{tk}"]
+                m1, m2 = bmean[(hz, tk)].get(dd, np.nan), bmed[(hz, tk)].get(dd, np.nan)
+                s[f"xm{hz}_{tk}"] = (r - m1) if r is not None and not math.isnan(m1) else None
+                s[f"x{hz}_{tk}"] = (r - m2) if r is not None and not math.isnan(m2) else None
 
     def block(rows):
         out = {}
         for hz in H:
-            out[str(hz)] = {"ret": stats([r[f"r{hz}"] for r in rows]),
-                            "excess_vs_median": stats([r[f"x{hz}"] for r in rows]),
-                            "excess_vs_mean": stats([r[f"xm{hz}"] for r in rows]),
-                            "beat_median_rate": (float(np.mean([r[f"x{hz}"] > 0 for r in rows if r[f"x{hz}"] is not None]))
-                                                 if any(r[f"x{hz}"] is not None for r in rows) else None)}
+            for tk in TPK:
+                vals = [r for r in rows if r[f"r{hz}_{tk}"] is not None]
+                kinds = [r[f"kind{hz}_{tk}"] for r in vals]
+                out[f"{hz}_{tk}"] = {
+                    "ret": stats([r[f"r{hz}_{tk}"] for r in vals]),
+                    "excess_vs_mean": stats([r[f"xm{hz}_{tk}"] for r in vals]),
+                    "beat_median_rate": float(np.mean([r[f"x{hz}_{tk}"] > 0 for r in vals if r[f"x{hz}_{tk}"] is not None])) if vals else None,
+                    "stop_rate": float(np.mean([k == 1 for k in kinds])) if vals else None,
+                    "tp_rate": float(np.mean([k == 2 for k in kinds])) if vals else None,
+                    "avg_days": float(np.mean([r[f"days{hz}_{tk}"] for r in vals])) if vals else None,
+                }
         return out
 
     def base_block(lo, hi):
         out = {}
-        for hz in H:
-            b = base_all[hz]
-            b = b[(b.index >= lo) & (b.index < hi)]
-            out[str(hz)] = {"n": int(len(b)), "mean": float(b.mean()) if len(b) else None,
-                            "median": float(b.median()) if len(b) else None, "win": float((b > 0).mean()) if len(b) else None}
+        for (hz, tk), sr in ball.items():
+            b = sr[(sr.index >= lo) & (sr.index < hi)]
+            out[f"{hz}_{tk}"] = {"n": int(len(b)), "mean": float(b.mean()) if len(b) else None,
+                                 "median": float(b.median()) if len(b) else None, "win": float((b > 0).mean()) if len(b) else None}
         return out
 
     far = last_date + pd.Timedelta(days=1)
@@ -280,8 +347,7 @@ def run(frames, names, today=None, cfg=CFG):
             "desc": VARIANTS[var], "signals": len(vs),
             "all": block(vs), "first": block(first), "second": block(second),
             "by_year": {y: block([s for s in vs if s["date"][:4] == y]) for y in years},
-            "path20": {"mfe": stats([s["mfe20"] for s in vs]), "mae": stats([s["mae20"] for s in vs]),
-                       "cross75_rate": float(np.mean([s["cross75_20"] for s in vs])) if vs else None},
+            "path20": {"mfe": stats([s["mfe20"] for s in vs]), "mae": stats([s["mae20"] for s in vs])},
         }
     result = {
         "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -289,6 +355,7 @@ def run(frames, names, today=None, cfg=CFG):
         "split": split.strftime("%Y-%m-%d"), "stocks_tested": len(frames), "cleaning": dropped,
         "signals": res_var["A"]["signals"], "variants": res_var,
         "limit_fill": {v: dict(x, rate=(x["filled"] / x["tried"]) if x["tried"] else None) for v, x in fills.items()},
+        "baseline_fill": dict(base_fill, rate=(base_fill["filled"] / base_fill["tried"]) if base_fill["tried"] else None),
         "baseline": {"all": base_block(eval_start, far), "first": base_block(eval_start, split), "second": base_block(split, far)},
         "current": sorted(current, key=lambda x: x["to_ma75"]),
     }
